@@ -992,7 +992,10 @@ var Core = (function () {
 
   /* ---------- Anfragen bearbeiten ----------
      io: { adminKey, cfg(), saveCfg(c), entries(monate|null), add(e), del(ids), mail(o), now(), id() } */
-  function handle(req, io) {
+  var APP = 'sve-getraenke-abrechnung', VERSION = 6;
+  /* Jede Antwort trägt die Kennung, damit die App merkt, wenn sie mit einem anderen Skript verbunden ist */
+  function handle(req, io) { var r = bearbeite(req, io); r.app = APP; r.v = VERSION; return r; }
+  function bearbeite(req, io) {
     var cfg = io.cfg(), me = werBin(cfg, req.k, io.adminKey);
     if (!me) return { ok: false, error: 'Kein Zugang. Der Link ist ungültig oder gesperrt.', code: 'auth' };
     var a = req.a || 'init';
@@ -1157,7 +1160,7 @@ var Core = (function () {
     return { ok: false, error: 'Unbekannte Anfrage.' };
   }
 
-  return { sha256: sha256, standard: standard, handle: handle, rechne: rechne, kistenRabatt: kistenRabatt, darfEin: darfEin, darfIrgendEin: darfIrgendEin, mailsVon: mailsVon, cent: cent, istTag: istTag, istMonat: istMonat, finde: finde };
+  return { APP: APP, VERSION: VERSION, sha256: sha256, standard: standard, handle: handle, rechne: rechne, kistenRabatt: kistenRabatt, darfEin: darfEin, darfIrgendEin: darfIrgendEin, mailsVon: mailsVon, cent: cent, istTag: istTag, istMonat: istMonat, finde: finde };
 })();
 
 </script>
@@ -1206,7 +1209,7 @@ var Core = (function () {
 
   /* ---------- Zustand ---------- */
   var conn = LS.get('conn');
-  var S = { me: null, cfg: null, ent: {}, frisch: {}, laden: {}, fehler: {}, screen: 'start', offen: false, pw: null, letzter: null, kopf: '', neu: null, sumAkt: 0, dept: null, tag: heute(), monat: heute().slice(0, 7), abr: heute().slice(0, 7),
+  var S = { me: null, cfg: null, ent: {}, frisch: {}, laden: {}, fehler: {}, screen: 'start', skript: 0, offen: false, pw: null, letzter: null, kopf: '', neu: null, sumAkt: 0, dept: null, tag: heute(), monat: heute().slice(0, 7), abr: heute().slice(0, 7),
     draft: {}, pq: {}, pwer: null, ed: null, busy: 0, sperre: null, startFehler: null };
   var view = $('#view');
   var ruhig = false; try { ruhig = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
@@ -1260,10 +1263,24 @@ var Core = (function () {
         .then(function (r) { return r.json(); }, function () { throw new Error('Keine Verbindung zum Google-Skript. Bist du online?'); })
         .catch(function (e) { if (e instanceof SyntaxError) throw new Error('Das Google-Skript antwortet nicht richtig. Prüfe die Bereitstellung (Zugriff: Jeder).'); throw e; });
     }
+    var fuer = conn;
     return p.then(function (r) {
+      if (fuer && geprueft !== fuer.dep + '~' + fuer.k) {
+        var art = herkunft(r);
+        if (art === 'fremd') { var f = new Error('Dieser Link führt zu einem anderen Google-Skript, zum Beispiel zum Getränke-Bestellbuch. Die Abrechnung braucht ihr eigenes Skript mit der Code.gs aus dem Paket (Anleitung Teil 2).'); f.code = 'fremd'; throw f; }
+        if (r && r.ok) { geprueft = fuer.dep + '~' + fuer.k; S.skript = r.app === Core.APP ? (r.v || 0) : (r.cfg && r.cfg.set && typeof r.cfg.set.pw === 'boolean' ? 2 : 1); }
+      }
       if (!r || !r.ok) { var e = new Error((r && r.error) || 'Das hat nicht geklappt.'); e.code = r && r.code; throw e; }
       nimm(r); return r;
     });
+  }
+  /* Antwortet wirklich das Skript der Abrechnung? Ein anderes Skript sagt womöglich auch „ok“, speichert aber nichts. */
+  var geprueft = null;
+  function herkunft(r) {
+    if (r && r.app === Core.APP) return 'eigen';
+    if (r && r.ok && r.me && r.me.r && r.cfg && r.cfg.arts && r.cfg.depts) return 'eigen';
+    if (r && !r.ok && r.code === 'auth') return 'eigen';
+    return 'fremd';
   }
   function nimm(r) {
     if (r.me) S.me = r.me;
@@ -1285,7 +1302,7 @@ var Core = (function () {
   function tu(promise, ok) {
     S.busy++; zeigBusy();
     return promise.then(function (r) { S.busy--; zeigBusy(); if (ok) toast(typeof ok === 'function' ? ok(r) : ok); return r; },
-      function (e) { S.busy--; zeigBusy(); toast(e.message, true); if (e.code === 'auth') { S.sperre = e.message; render(); } throw e; });
+      function (e) { S.busy--; zeigBusy(); toast(e.message, true); if (e.code === 'auth' || e.code === 'fremd') { S.sperre = e.message; S.sperreArt = e.code; render(); } throw e; });
   }
   function zeigBusy() { $('#lade').hidden = S.busy <= 0; $$('[data-busy]').forEach(function (b) { b.disabled = S.busy > 0; }); var bb = $('#buchBtn'); if (bb) bb.disabled = S.busy > 0 || !draftItems(S.draft).length; }
   var toastT = null;
@@ -1317,7 +1334,7 @@ var Core = (function () {
     S.busy++; zeigBusy();
     api('init', { monate: [a, schiebeMonat(a, -1)] }).then(function () { S.busy--; zeigBusy(); render(); }, function (e) {
       S.busy--; zeigBusy();
-      if (e.code === 'auth') S.sperre = e.message; else if (!S.cfg) S.startFehler = e.message; else toast(e.message, true);
+      if (e.code === 'auth' || e.code === 'fremd') { S.sperre = e.message; S.sperreArt = e.code; if (e.code === 'fremd') LS.del('cache'); } else if (!S.cfg) S.startFehler = e.message; else toast(e.message, true);
       render();
     });
   }
@@ -1350,7 +1367,14 @@ var Core = (function () {
   }
   function setzKopf(key, html) { if (S.kopf === key) return; S.kopf = key; $('#kopf').innerHTML = html; }
   function render() {
-    if (S.sperre) { $('#demo').hidden = true; setzKopf('marke', marke(false)); S.letzter = null; view.innerHTML = '<section class="card"><div class="title">Kein Zugang</div><p class="hint">' + esc(S.sperre) + '</p><div class="reihe"><button class="btn hell" data-act="neuLaden">Noch einmal versuchen</button><button class="btn" data-act="verbinden">Anderen Link einfügen</button></div></section>'; return; }
+    if (S.sperre) {
+      $('#demo').hidden = true; setzKopf('marke', marke(false)); S.letzter = null;
+      view.innerHTML = '<section class="card"><div class="title">' + (S.sperreArt === 'fremd' ? 'Mit dem falschen Skript verbunden' : 'Kein Zugang') + '</div><p class="hint">' + esc(S.sperre) + '</p>' +
+        (S.sperreArt === 'fremd' ? '<p class="hint">Solange das so ist, wird nichts gespeichert. Füge den Link aus dem Skript „Getränke-Abrechnung“ ein.</p>' : '') +
+        '<div class="reihe">' + (S.sperreArt === 'fremd' ? '' : '<button class="btn hell" data-act="neuLaden">Noch einmal versuchen</button>') + '<button class="btn" data-act="verbinden">' + (S.sperreArt === 'fremd' ? 'Richtigen Link einfügen' : 'Anderen Link einfügen') + '</button></div>' +
+        (conn ? '<button class="btn hell" data-act="trennen">Verbindung trennen und Vorschau zeigen</button>' : '') + '</section>';
+      return;
+    }
     if (!S.cfg) { $('#demo').hidden = true; setzKopf('marke', marke(false)); S.letzter = null; view.innerHTML = S.startFehler ? '<section class="card"><div class="title">Keine Verbindung</div><p class="hint">' + esc(S.startFehler) + '</p><button class="btn" data-act="neuLaden">Noch einmal versuchen</button></section>' : '<p class="note">Lade …</p>'; return; }
     var r = rechte(), sc = S.screen;
     if (sc !== 'start' && sc !== 'dept' && !S.offen) sc = 'start';
@@ -1930,9 +1954,15 @@ var Core = (function () {
     else {
       h += '<div class="list"><div class="row"><div class="mid"><b>' + esc(S.me ? S.me.name : '–') + '</b><small>' + esc(S.me ? rechteText(S.me) : '') + '</small></div></div></div>' +
         '<div class="reihe"><button class="btn hell" data-act="neuLaden">Neu laden</button><button class="btn rot" data-act="trennen">Verbindung trennen</button></div>' +
-        '<p class="hint">Nach dem Trennen brauchst du deinen Link, um dich wieder zu verbinden.</p>';
+        '<p class="hint">Nach dem Trennen brauchst du deinen Link, um dich wieder zu verbinden.</p>' +
+        '<p class="hint">App-Stand ' + Core.VERSION + ' · Google-Skript-Stand ' + (S.skript || '?') + (S.skript && S.skript < Core.VERSION ? ' (älter als die App, bitte die neue Code.gs einfügen und als neue Version bereitstellen)' : '') + '</p>';
     }
     sheet('Zugang', h);
+  }
+  function sheetSkriptAlt() {
+    sheet('Google-Skript aktualisieren', '<p class="hint">Dein Google-Skript ist älter als die App und kennt das Passwort für die Einstellungen noch nicht.</p>' +
+      '<ol class="schritte"><li>Öffne dein Projekt „Getränke-Abrechnung“ auf <code>script.google.com</code>.</li><li>Ersetze den ganzen Inhalt durch die neue <code>Code.gs</code> aus dem Paket und speichere.</li>' +
+      '<li>„Bereitstellen“ → „Bereitstellungen verwalten“ → Stift → Version „Neue Version“ → „Bereitstellen“.</li><li>Tippe hier auf „Neu laden“.</li></ol><button class="btn" data-act="neuLaden">Neu laden</button>');
   }
   function sheetVerbinden() {
     sheet('Verbinden',
@@ -2014,6 +2044,7 @@ var Core = (function () {
     zahnrad: function () {
       var r = rechte();
       if (!(r.abr || r.verw || r.admin)) { sheetKonto(); return; }
+      if (conn && typeof S.cfg.set.pw !== 'boolean') { sheetSkriptAlt(); return; }
       if (S.cfg.set.pw) { sheetPw(); return; }
       if (r.admin) { sheetPwNeu(); return; }
       S.offen = true; geh('admin');
@@ -2025,7 +2056,7 @@ var Core = (function () {
         S.offen = true; S.pw = pw; inp.blur(); var sc = $('#schloss'); if (sc) sc.classList.add('auf');
         setTimeout(function () { schliesse(); geh('admin'); }, ruhig ? 0 : 420);
       }, function (e) {
-        if (e.code === 'auth') { S.sperre = e.message; schliesse(); render(); return; }
+        if (e.code === 'auth' || e.code === 'fremd') { S.sperre = e.message; S.sperreArt = e.code; schliesse(); render(); return; }
         btn.disabled = false; err.hidden = false; err.textContent = e.message; wackel($('.sheet-card')); inp.value = ''; inp.focus();
       });
     },
@@ -2156,13 +2187,16 @@ var Core = (function () {
     verbindenJetzt: function () {
       var q = liesLink($('#vLink').value), err = $('#vErr');
       if (!q || q.err) { err.hidden = false; err.textContent = (q && q.err) || 'Das ist kein gültiger Link. Er beginnt mit https://script.google.com/… oder ist dein persönlicher Einladungslink.'; return; }
-      var alt = conn; conn = { dep: q.dep, k: q.k }; err.hidden = true;
-      tu(api('init', { monate: [heute().slice(0, 7), schiebeMonat(heute().slice(0, 7), -1)] })).then(function () { LS.set('conn', conn); S.sperre = null; S.screen = 'start'; S.offen = false; schliesse(); render(); feier('Verbunden', S.me.name); },
-        function (e) { conn = alt; S.sperre = null; render(); var er = $('#vErr'); if (er) { er.hidden = false; er.textContent = 'Das hat nicht geklappt: ' + e.message; } });
+      var alt = conn; S.sperreVor = S.sperre ? { t: S.sperre, a: S.sperreArt } : null; conn = { dep: q.dep, k: q.k }; err.hidden = true;
+      tu(api('init', { monate: [heute().slice(0, 7), schiebeMonat(heute().slice(0, 7), -1)] })).then(function (r) {
+          var ent = {}, frisch = {}; (r.monate || []).forEach(function (m) { ent[m] = S.ent[m] || []; frisch[m] = true; });
+          S.ent = ent; S.frisch = frisch; S.fehler = {}; LS.set('conn', conn); S.sperre = null; S.sperreArt = null; S.screen = 'start'; S.offen = false; S.draft = {}; schliesse(); render(); feier('Verbunden', S.me.name);
+        },
+        function (e) { conn = alt; if (!alt || S.sperreArt !== 'fremd' || e.code !== 'fremd') { S.sperre = alt && S.sperreVor ? S.sperreVor.t : null; S.sperreArt = alt && S.sperreVor ? S.sperreVor.a : null; } render(); var er = $('#vErr'); if (er) { er.hidden = false; er.textContent = 'Das hat nicht geklappt: ' + e.message; } });
     },
     trennen: function (b) {
       if (!b.classList.contains('scharf')) { b.classList.add('scharf'); b.textContent = 'Wirklich trennen?'; return; }
-      conn = null; LS.del('conn'); LS.del('cache'); schliesse(); S.screen = 'start'; S.offen = false; try { history.replaceState(null, '', location.pathname); } catch (e) {} ladeAlles();
+      conn = null; geprueft = null; S.skript = 0; LS.del('conn'); LS.del('cache'); schliesse(); S.screen = 'start'; S.offen = false; try { history.replaceState(null, '', location.pathname); } catch (e) {} ladeAlles();
     },
     demoNeu: function () { LS.del('demo'); demoDb = null; schliesse(); S.screen = 'start'; S.offen = false; ladeAlles(); toast('Beispieldaten zurückgesetzt'); },
     neuLaden: function () { schliesse(); ladeAlles(); },
