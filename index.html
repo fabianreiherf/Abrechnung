@@ -242,6 +242,7 @@
   .gks { display: flex; flex-direction: column; gap: 14px; }
   .gk { --gc: var(--c-bier); position: relative; display: flex; flex-direction: column; gap: 14px; padding: 18px; border-radius: 24px; background: var(--surface); border: 2.5px solid transparent; box-shadow: 0 12px 30px var(--shadow); transition: border-color .25s ease; }
   .gk-weizen { --gc: var(--c-weizen); } .gk-soft { --gc: var(--c-soft); } .gk-wasser { --gc: var(--c-wasser); } .gk-sonst1 { --gc: var(--c-s1); } .gk-sonst2 { --gc: var(--c-s2); } .gk-sonst3 { --gc: var(--c-s3); }
+  .gk-tasse { --gc: var(--c-weizen); } .gk-essen { --gc: var(--c-s2); } .gk-ding { --gc: var(--c-s1); }
   .gk.an { border-color: var(--gc); }
   .gk-kopf { display: flex; align-items: flex-start; gap: 14px; }
   .gk-ic { flex: none; width: 56px; height: 56px; border-radius: 18px; background: var(--gc); display: grid; place-items: center; box-shadow: inset 0 -4px 0 rgba(0,0,0,.14); }
@@ -937,15 +938,15 @@ var Core = (function () {
         var sig = [it.a, it.pr, it.ks, it.rt, it.rv, e.rab ? 1 : 0].join('|');
         if (!u.grp[sig]) u.grp[sig] = { a: it.a, pr: it.pr, ks: it.ks, rt: it.rt, rv: it.rv, rab: !!e.rab, n: 0 };
         u.grp[sig].n += (it.k || 0) * it.ks + (it.f || 0);
-        if (!artInfo[it.a]) { artInfo[it.a] = { a: it.a, name: it.n, pr: it.pr, ks: it.ks }; artSeen.push(it.a); }
-        else { artInfo[it.a].name = it.n; artInfo[it.a].pr = it.pr; artInfo[it.a].ks = it.ks; }
+        if (!artInfo[it.a]) { artInfo[it.a] = { a: it.a }; artSeen.push(it.a); }
+        var ai0 = artInfo[it.a]; ai0.name = it.n; ai0.pr = it.pr; ai0.ks = it.ks; ai0.st = !it.ks; ai0.eh = it.ks ? '' : (it.eh || 'Stück');
       });
     });
     var arts = [];
     cfg.arts.forEach(function (a) { if (artInfo[a.id]) { artInfo[a.id].sorten = a.sorten || ''; arts.push(artInfo[a.id]); } });
     artSeen.forEach(function (id) { if (arts.indexOf(artInfo[id]) < 0) arts.push(artInfo[id]); });
 
-    var pos = {}, posOrder = [], zwischen = 0, rabatt = 0, nRab = 0, pctSet = {}, nurPct = true, kistenGes = 0, flGes = 0;
+    var pos = {}, posOrder = [], zwischen = 0, rabatt = 0, nRab = 0, pctSet = {}, nurPct = true, kistenGes = 0, flGes = 0, stGes = 0;
     var rows = order.map(function (key) {
       var u = units[key], row = { z: u.z, p: u.p, name: u.name, von: u.von, am: u.am, arts: {}, rabatt: 0, betrag: 0 };
       Object.keys(u.grp).forEach(function (sig) {
@@ -955,7 +956,7 @@ var Core = (function () {
         if (!row.arts[g.a]) row.arts[g.a] = { k: 0, f: 0, n: 0, b: 0 };
         row.arts[g.a].k += voll; row.arts[g.a].f += rest; row.arts[g.a].n += g.n; row.arts[g.a].b += g.n * g.pr - rab;
         row.rabatt += rab; row.betrag += g.n * g.pr - rab;
-        zwischen += g.n * g.pr; rabatt += rab; kistenGes += voll; flGes += g.n;
+        zwischen += g.n * g.pr; rabatt += rab; kistenGes += voll; if (g.ks > 0) flGes += g.n; else stGes += g.n;
         if (rab > 0) { nRab += voll; if (g.rt === 'pct') pctSet[g.rv] = 1; else nurPct = false; }
         var pk = g.a + '|' + g.pr + '|' + g.ks;
         if (!pos[pk]) { pos[pk] = { a: g.a, pr: g.pr, ks: g.ks, k: 0, f: 0 }; posOrder.push(pk); }
@@ -979,20 +980,20 @@ var Core = (function () {
       posOrder.forEach(function (pk) {
         var p = pos[pk]; if (p.a !== ai.a) return;
         if (p.k) positionen.push({ a: p.a, name: ai.name, sorten: ai.sorten || '', typ: 'kiste', ks: p.ks, menge: p.k, einzel: p.pr * p.ks, betrag: p.k * p.pr * p.ks });
-        if (p.f) positionen.push({ a: p.a, name: ai.name, sorten: ai.sorten || '', typ: 'flasche', ks: p.ks, menge: p.f, einzel: p.pr, betrag: p.f * p.pr });
+        if (p.f) positionen.push({ a: p.a, name: ai.name, sorten: ai.sorten || '', typ: p.ks > 0 ? 'flasche' : 'stueck', eh: ai.eh, ks: p.ks, menge: p.f, einzel: p.pr, betrag: p.f * p.pr });
       });
     });
     var pcts = Object.keys(pctSet);
     return {
       dept: dept, monat: monat, person: person, arts: arts, rows: rows, positionen: positionen,
       zwischen: zwischen, rabatt: rabatt, nRab: nRab, rabPct: (nurPct && pcts.length === 1) ? Number(pcts[0]) : null,
-      summe: zwischen - rabatt, kisten: kistenGes, flaschen: flGes, leer: rows.length === 0
+      summe: zwischen - rabatt, kisten: kistenGes, flaschen: flGes, stueck: stGes, leer: rows.length === 0
     };
   }
 
   /* ---------- Anfragen bearbeiten ----------
      io: { adminKey, cfg(), saveCfg(c), entries(monate|null), add(e), del(ids), mail(o), now(), id() } */
-  var APP = 'sve-getraenke-abrechnung', VERSION = 6;
+  var APP = 'sve-getraenke-abrechnung', VERSION = 7;
   /* Jede Antwort trägt die Kennung, damit die App merkt, wenn sie mit einem anderen Skript verbunden ist */
   function handle(req, io) { var r = bearbeite(req, io); r.app = APP; r.v = VERSION; return r; }
   function bearbeite(req, io) {
@@ -1022,9 +1023,11 @@ var Core = (function () {
       var items = [];
       (Array.isArray(b.it) ? b.it : []).forEach(function (x) {
         var art = finde(cfg.arts, x.a); if (!art) return;
-        var k = person ? 0 : ganz(x.k, 999), f = ganz(x.f, 9999);
+        var st = art.typ === 'stueck', k = (person || st) ? 0 : ganz(x.k, 999), f = ganz(x.f, 9999);
         if (!k && !f) return;
-        items.push({ a: art.id, n: art.name, pr: cent(art.preis), ks: ganz(art.kiste, 999), rt: art.rt || 'none', rv: Number(art.rv) || 0, k: k, f: f });
+        var item = { a: art.id, n: art.name, pr: cent(art.preis), ks: st ? 0 : Math.max(1, ganz(art.kiste, 999)), rt: st ? 'none' : (art.rt || 'none'), rv: st ? 0 : (Number(art.rv) || 0), k: k, f: f };
+        if (st) item.eh = art.einheit || 'Stück';   /* normaler Artikel: nur Preis je Stück, keine Kiste */
+        items.push(item);
       });
       var monat = b.z.slice(0, 7);
       if (person) {
@@ -1055,9 +1058,10 @@ var Core = (function () {
       var neu = [];
       (Array.isArray(req.data) ? req.data : []).slice(0, 60).forEach(function (x) {
         var name = str(x.name, 40); if (!name) return;
-        var rt = ['pct', 'abs', 'fix', 'none'].indexOf(x.rt) >= 0 ? x.rt : 'none';
+        var stueck = x.typ === 'stueck', rt = stueck ? 'none' : (['pct', 'abs', 'fix', 'none'].indexOf(x.rt) >= 0 ? x.rt : 'none');
         var id = x.id && !finde(neu, x.id) ? str(x.id, 40) : neueId(neu.concat(cfg.arts), name);
-        neu.push({ id: id, name: name, sorten: str(x.sorten, 120), preis: Math.round(zahl(x.preis, 0, 999) * 100) / 100, kiste: Math.max(1, ganz(x.kiste, 999)),
+        neu.push({ id: id, name: name, sorten: str(x.sorten, 120), preis: Math.round(zahl(x.preis, 0, 9999) * 100) / 100,
+          typ: stueck ? 'stueck' : 'kiste', einheit: stueck ? (str(x.einheit, 14) || 'Stück') : '', kiste: stueck ? 0 : Math.max(1, ganz(x.kiste, 999)),
           rt: rt, rv: rt === 'none' ? 0 : Math.round(zahl(x.rv, 0, 9999) * 100) / 100, aktiv: x.aktiv !== false });
       });
       if (!neu.length) return { ok: false, error: 'Mindestens ein Artikel muss bleiben.' };
@@ -1428,7 +1432,10 @@ var Core = (function () {
     bier: '<path d="M10 2h4v5c0 1.6 3 3 3 6v8a1.6 1.6 0 0 1-1.6 1.6H8.6A1.6 1.6 0 0 1 7 21v-8c0-3 3-4.4 3-6z"/>',
     weizen: '<path d="M7.6 2h8.8c.7 3.2 1.2 6.2.4 10.2-.5 2.6-1 4.4-1 7.3A1.5 1.5 0 0 1 14.3 21H9.7a1.5 1.5 0 0 1-1.5-1.5c0-2.9-.5-4.700-1-7.300C6.400 8.200 6.900 5.200 7.600 2z"/>',
     soft: '<path d="M8.5 2.5h7l1.7 2.6v13.8l-1.700 2.600h-7l-1.700-2.600V5.100z"/>',
-    wasser: '<path d="M12 2.300c3.700 4.700 6.200 8 6.200 11.300a6.200 6.200 0 0 1-12.400 0c0-3.300 2.500-6.600 6.200-11.300z"/>'
+    wasser: '<path d="M12 2.300c3.700 4.700 6.200 8 6.200 11.300a6.200 6.200 0 0 1-12.400 0c0-3.300 2.500-6.600 6.200-11.300z"/>',
+    tasse: '<path d="M4.500 9h11.500v5.500a5 5 0 0 1-5 5h-1.500a5 5 0 0 1-5-5z"/><path d="M16 10.500h1.300a2.400 2.400 0 0 1 0 4.800H16M7.500 3.500v2.300M10.300 3v2.800M13.100 3.500v2.300" fill="none" stroke="#fff" stroke-width="1.800" stroke-linecap="round"/>',
+    essen: '<path d="M7.500 3v18M5 3v5.500a2.500 2.500 0 0 0 5 0V3M16.500 21v-8.500c-1.900 0-2.800-1.100-2.800-2.900 0-2.600.9-5 2.800-6.600z" fill="none" stroke="#fff" stroke-width="1.900" stroke-linecap="round" stroke-linejoin="round"/>',
+    ding: '<path d="M3.500 12.300V5.200a1.700 1.700 0 0 1 1.700-1.700h7.100a1.700 1.700 0 0 1 1.200.5l7 7a1.700 1.700 0 0 1 0 2.400l-7.100 7.100a1.700 1.700 0 0 1-2.400 0l-7-7a1.700 1.700 0 0 1-.5-1.200z"/><circle cx="8.200" cy="8.200" r="1.800" fill="var(--gc)"/>'
   };
   function artSorte(a, i) {
     var n = a.name.toLowerCase(), alles = n + ' ' + String(a.sorten || '').toLowerCase();
@@ -1437,6 +1444,9 @@ var Core = (function () {
     if (/cola|fanta|sprite|soft|limo|spezi|energy/.test(alles)) return 'soft';
     if (/wasser|schorle|sport|saft/.test(alles)) return 'wasser';
     if (/bier|pils|radler/.test(alles)) return 'bier';
+    if (/kaffee|tee\b|kakao|cappuccino|espresso|glühwein/.test(alles)) return 'tasse';
+    if (/wurst|pommes|brötchen|kuchen|essen|snack|chips|schnitzel|pizza|frikadelle|waffel|süß|riegel/.test(alles)) return 'essen';
+    if (a.typ === 'stueck') return 'ding';
     return 'sonst' + (i % 3 + 1);
   }
   function zaehler(ctx, art, fld, wert, label) {
@@ -1446,18 +1456,22 @@ var Core = (function () {
       '<button type="button" class="p" data-act="plus" aria-label="' + label + ' mehr">+</button></div>';
   }
   function artKarte(ctx, a, i, q, mitKisten, mitRabatt) {
-    var pr = Core.cent(a.preis), voll = pr * a.kiste, rab = mitRabatt ? Core.kistenRabatt(pr, a.kiste, a.rt, a.rv) : 0, sorte = artSorte(a, i), an = !!(q.k || q.f);
+    var st = a.typ === 'stueck', pr = Core.cent(a.preis), voll = pr * a.kiste, rab = (mitRabatt && !st) ? Core.kistenRabatt(pr, a.kiste, a.rt, a.rv) : 0, sorte = artSorte(a, i), an = !!(q.k || q.f);
+    var eh = st && a.einheit && a.einheit !== 'Stück' ? ' pro ' + esc(a.einheit) : '';
     return '<section class="gk gk-' + sorte + (an ? ' an' : '') + '" style="--i:' + i + '" data-gk="' + esc(a.id) + '">' +
       '<div class="gk-kopf"><span class="gk-ic" aria-hidden="true"><svg viewBox="0 0 24 24">' + (SYMBOL[sorte] || SYMBOL.bier) + '</svg></span>' +
       '<div class="gk-t"><h2>' + esc(a.name) + '</h2>' + (a.sorten ? '<p>' + esc(a.sorten) + '</p>' : '') + '</div>' +
       '<span class="gk-sum num" data-sum="' + esc(a.id) + '" hidden></span></div>' +
-      (mitKisten ? '<div class="gk-zeile"><div class="gk-l"><b>Kisten <span>à ' + a.kiste + '</span></b><small class="num">' + (rab > 0 ? '<b>' + eur(voll - rab) + '</b> <s>' + eur(voll) + '</s>' : 'je ' + eur(voll)) + '</small></div>' + zaehler(ctx, a.id, 'k', q.k, 'Kisten ' + a.name) + '</div>' : '') +
-      '<div class="gk-zeile"><div class="gk-l"><b>Flaschen</b><small class="num">je ' + eur(pr) + '</small></div>' + zaehler(ctx, a.id, 'f', q.f, 'Flaschen ' + a.name) + '</div>' +
+      (mitKisten && !st ? '<div class="gk-zeile"><div class="gk-l"><b>Kisten <span>à ' + a.kiste + '</span></b><small class="num">' + (rab > 0 ? '<b>' + eur(voll - rab) + '</b> <s>' + eur(voll) + '</s>' : 'je ' + eur(voll)) + '</small></div>' + zaehler(ctx, a.id, 'k', q.k, 'Kisten ' + a.name) + '</div>' : '') +
+      '<div class="gk-zeile"><div class="gk-l"><b>' + (st ? 'Anzahl' : 'Flaschen') + '</b><small class="num">je ' + eur(pr) + eh + '</small></div>' + zaehler(ctx, a.id, 'f', q.f, (st ? 'Anzahl ' : 'Flaschen ') + a.name) + '</div>' +
       '<div class="zus" data-zus="' + esc(a.id) + '" hidden></div></section>';
   }
   function mengenText(items) {
-    var k = 0, f = 0; items.forEach(function (i) { k += i.k || 0; f += i.f || 0; });
-    var t = []; if (k) t.push(mehrzahl(k, 'Kiste', 'Kisten')); if (f) t.push(mehrzahl(f, 'Flasche', 'Flaschen')); return t.join(' + ');
+    var k = 0, f = 0, st = 0; items.forEach(function (i) { k += i.k || 0; if (i.ks) f += i.f || 0; else st += i.f || 0; });
+    return teileText(k, f, st);
+  }
+  function teileText(k, f, st) {
+    var t = []; if (k) t.push(mehrzahl(k, 'Kiste', 'Kisten')); if (f) t.push(mehrzahl(f, 'Flasche', 'Flaschen')); if (st) t.push(st + ' Stück'); return t.join(' + ');
   }
   function gkStand(wurzel, a, q, betrag, live) {
     var karte = $('[data-gk="' + CSS.escape(a.id) + '"]', wurzel); if (!karte) return;
@@ -1470,8 +1484,9 @@ var Core = (function () {
   function draftItems(q, nurFl) {
     var out = [];
     aktArts().forEach(function (a) {
-      var x = q[a.id]; if (!x) return; var k = nurFl ? 0 : (x.k || 0), f = x.f || 0; if (!k && !f) return;
-      out.push({ a: a.id, n: a.name, pr: Core.cent(a.preis), ks: a.kiste, rt: a.rt, rv: a.rv, k: k, f: f });
+      var x = q[a.id]; if (!x) return; var st = a.typ === 'stueck', k = (nurFl || st) ? 0 : (x.k || 0), f = x.f || 0; if (!k && !f) return;
+      var it = { a: a.id, n: a.name, pr: Core.cent(a.preis), ks: st ? 0 : a.kiste, rt: st ? 'none' : a.rt, rv: st ? 0 : a.rv, k: k, f: f }; if (st) it.eh = a.einheit || 'Stück';
+      out.push(it);
     });
     return out;
   }
@@ -1498,7 +1513,7 @@ var Core = (function () {
     return h + '</section>';
   }
   function inhalt(e) {
-    return (e.it || []).map(function (it) { var t = []; if (it.k) t.push(it.k + ' Ki.'); if (it.f) t.push(it.f + ' Fl.'); return t.join(' + ') + ' ' + kurz(it.n); }).join(', ');
+    return (e.it || []).map(function (it) { if (!it.ks) return it.f + ' × ' + it.n; var t = []; if (it.k) t.push(it.k + ' Ki.'); if (it.f) t.push(it.f + ' Fl.'); return t.join(' + ') + ' ' + kurz(it.n); }).join(', ');
   }
   /* Summe und Kisten-Hinweise live aktualisieren, ohne die Eingabefelder neu zu bauen */
   function zaehl(el, c, live) {
@@ -1572,7 +1587,7 @@ var Core = (function () {
     var items = draftItems(S.pq, true), b = Core.rechne(S.cfg, items.length ? [{ id: 'x', d: d.id, p: 'x', pn: '', z: S.monat, it: items, rab: !!d.rabatt, by: '', at: '' }] : [], d.id, S.monat);
     var n = 0, row = b.rows[0] || { arts: {} }, bar = $('#pBar'); items.forEach(function (i) { n += i.f; });
     zaehl(el, b.summe, live);
-    $('#pSumS').textContent = (n ? mehrzahl(n, 'Flasche', 'Flaschen') : 'Tippe auf + oder auf die Zahl') + (b.rabatt > 0 ? ' · ' + eur(b.rabatt) + ' Rabatt' : '');
+    $('#pSumS').textContent = (n ? mengenText(items) : 'Tippe auf + oder auf die Zahl') + (b.rabatt > 0 ? ' · ' + eur(b.rabatt) + ' Rabatt' : '');
     if (live && !ruhig && bar) { bar.classList.remove('wipp'); void bar.offsetWidth; bar.classList.add('wipp'); }
     S.cfg.arts.forEach(function (a) { var x = row.arts[a.id]; gkStand($('#sheet'), a, S.pq[a.id] || {}, x ? x.b : 0, live); });
   }
@@ -1603,7 +1618,7 @@ var Core = (function () {
     h += '<div class="total"><span>Alle Abteilungen</span><b class="num">' + eur(ges) + '</b></div>' + (offen ? '<button class="btn weiss voll" data-act="alleSenden" data-busy>Alle Abrechnungen senden</button>' : '') + '</section><div class="abrs">';
     list.forEach(function (x) {
       var st = versandStatus(x, m), b = x.b;
-      var det = b.leer ? '' : (b.person ? mehrzahl(b.rows.length, 'Person', 'Personen') + ' · ' + mehrzahl(b.flaschen, 'Flasche', 'Flaschen') : mehrzahl(b.rows.length, 'Tag', 'Tage') + ' · ' + (b.kisten ? mehrzahl(b.kisten, 'Kiste', 'Kisten') + ' + ' : '') + mehrzahl(b.flaschen - b.kisten * 0 - kistenFlaschen(b), 'Flasche', 'Flaschen'));
+      var det = b.leer ? '' : (b.person ? mehrzahl(b.rows.length, 'Person', 'Personen') : mehrzahl(b.rows.length, 'Tag', 'Tage')) + ' · ' + teileText(b.person ? 0 : b.kisten, b.flaschen - (b.person ? 0 : kistenFlaschen(b)), b.stueck);
       h += '<section class="card abr"><div class="oben"><b>' + esc(x.d.name) + '</b><span class="amt num">' + eur(b.summe) + '</span></div>' +
         (det ? '<div class="sub">' + esc(det) + '</div>' : '') + '<div><span class="stat ' + st.cls + '">' + esc(st.txt) + '</span></div>' +
         (b.leer ? '' : '<div class="reihe"><button class="btn hell klein" data-act="ansehen" data-id="' + esc(x.d.id) + '">Ansehen</button><button class="btn klein" data-act="senden" data-id="' + esc(x.d.id) + '" data-busy>' + (st.s ? 'Erneut senden' : 'Senden') + '</button></div>') + '</section>';
@@ -1613,7 +1628,7 @@ var Core = (function () {
   function kistenFlaschen(b) { var n = 0; b.positionen.forEach(function (p) { if (p.typ === 'kiste') n += p.menge * p.ks; }); return n; }
   function bill(id, m) { return Core.rechne(S.cfg, S.ent[m] || [], id, m); }
   function rabattText(b) { return 'Kistenrabatt ' + (b.rabPct != null ? zahlDe(b.rabPct, b.rabPct % 1 ? 1 : 0) + ' % ' : '') + 'auf ' + mehrzahl(b.nRab, 'Kiste', 'Kisten'); }
-  function zeileText(b, r) { return b.arts.filter(function (a) { return r.arts[a.a]; }).map(function (a) { var x = r.arts[a.a], t = []; if (x.k) t.push(x.k + ' Ki.'); if (x.f) t.push(x.f + ' Fl.'); return t.join(' + ') + ' ' + kurz(a.name); }).join(', '); }
+  function zeileText(b, r) { return b.arts.filter(function (a) { return r.arts[a.a]; }).map(function (a) { var x = r.arts[a.a], t = []; if (a.st) return x.f + ' × ' + a.name; if (x.k) t.push(x.k + ' Ki.'); if (x.f) t.push(x.f + ' Fl.'); return t.join(' + ') + ' ' + kurz(a.name); }).join(', '); }
   function sheetAnsehen(id) {
     var b = bill(id, S.abr), st = versandStatus({ d: b.dept, b: b }, S.abr);
     sheet(esc(b.dept.name), '<p class="hint">' + esc(monatText(S.abr)) + ' · <span class="stat ' + st.cls + '">' + esc(st.txt) + '</span></p>' +
@@ -1774,12 +1789,12 @@ var Core = (function () {
       platz(18, pKopf);
       linie(L, y, R, 0.4, BLAU);
       f('bold', klein ? 9.5 : 11, FG); t('Gesamt', L + 1.5, y + 6);
-      if (alsText) t(mehrzahl(b.flaschen, 'Flasche', 'Flaschen'), L + wName + 1.5, y + 6);
+      if (alsText) t(teileText(0, b.flaschen, b.stueck), L + wName + 1.5, y + 6);
       else b.arts.forEach(function (a, i) { var su = 0; b.rows.forEach(function (r) { if (r.arts[a.a]) su += r.arts[a.a].n; }); t(String(su), L + wName + (i + 1) * wArt - 1.5, y + 6, 'right'); });
       if (mitRab) t('–' + eur(b.rabatt), R - wBetrag - 1.5, y + 6, 'right');
       t(eur(b.summe), R - 1.5, y + 6, 'right');
       y += 12;
-      f('normal', 8.5, MUT); t('Mengen in Flaschen für den ganzen Monat.' + (mitRab ? ' Kistenrabatt je voller Kiste.' : ' Ohne Kistenrabatt.'), L, y);
+      f('normal', 8.5, MUT); t((b.stueck ? 'Mengen für den ganzen Monat.' : 'Mengen in Flaschen für den ganzen Monat.') + (mitRab ? ' Kistenrabatt je voller Kiste.' : ' Ohne Kistenrabatt.'), L, y);
     } else {
       var sKopf = function () {
         f('bold', 8.5, MUT); t('Position', L + 1.5, y + 5); t('Menge', 142, y + 5, 'right'); t('Einzelpreis', 167, y + 5, 'right'); t('Betrag', R - 1.5, y + 5, 'right');
@@ -1788,7 +1803,7 @@ var Core = (function () {
       h2('Zusammenfassung'); y -= 2; sKopf();
       b.positionen.forEach(function (p) {
         var hh = p.sorten ? 11 : 8; platz(hh, sKopf);
-        f('normal', 10.5, FG); t(passt(p.name + (p.typ === 'kiste' ? ', Kiste (' + p.ks + ' Flaschen)' : ', Flasche'), 105), L + 1.5, y + 5);
+        f('normal', 10.5, FG); t(passt(p.name + (p.typ === 'kiste' ? ', Kiste (' + p.ks + ' Flaschen)' : p.typ === 'stueck' ? (p.eh && p.eh !== 'Stück' ? ', ' + p.eh : '') : ', Flasche'), 105), L + 1.5, y + 5);
         t(String(p.menge), 142, y + 5, 'right'); t(eur(p.einzel), 167, y + 5, 'right'); t(eur(p.betrag), R - 1.5, y + 5, 'right');
         if (p.sorten) { f('normal', 8.5, MUT); t(passt(p.sorten, 105), L + 1.5, y + 9); }
         y += hh; linie(L, y, R, 0.2, LIN);
@@ -1810,7 +1825,7 @@ var Core = (function () {
           y += 5.5; f('bold', 8.5, MUT);
           t('Datum', L + 1.5, y + 4);
           if (text) t('Inhalt', L + wD + 1.5, y + 4);
-          else b.arts.forEach(function (a, i) { var x0 = L + wD + i * 2 * wA; t('Ki.', x0 + wA - 1.2, y + 4, 'right'); t('Fl.', x0 + 2 * wA - 1.2, y + 4, 'right'); });
+          else b.arts.forEach(function (a, i) { var x0 = L + wD + i * 2 * wA; if (!a.st) t('Ki.', x0 + wA - 1.2, y + 4, 'right'); t(a.st ? 'Anz.' : 'Fl.', x0 + 2 * wA - 1.2, y + 4, 'right'); });
           t('Rabatt', R - wV - wBt - 1.2, y + 4, 'right'); t('Betrag', R - wV - 1.2, y + 4, 'right'); t('Eintrag von', R - wV + 1.5, y + 4);
           y += 6; linie(L, y, R, 0.4, BLAU);
         };
@@ -1823,7 +1838,7 @@ var Core = (function () {
           if (text) zeilenText(zeilen, L + wD + 1.5, y + 4.5, 4);
           else b.arts.forEach(function (a, i) {
             var x0 = L + wD + i * 2 * wA, x = r.arts[a.a] || {};
-            t(x.k ? String(x.k) : '–', x0 + wA - 1.2, y + 4.5, 'right'); t(x.f ? String(x.f) : '–', x0 + 2 * wA - 1.2, y + 4.5, 'right');
+            if (!a.st) t(x.k ? String(x.k) : '–', x0 + wA - 1.2, y + 4.5, 'right'); t(x.f ? String(x.f) : '–', x0 + 2 * wA - 1.2, y + 4.5, 'right');
             g.strich(x0 + 2 * wA, y, x0 + 2 * wA, y + hh, 0.2, LIN);
           });
           t(r.rabatt ? '–' + eur(r.rabatt) : '–', R - wV - wBt - 1.2, y + 4.5, 'right');
@@ -1859,7 +1874,8 @@ var Core = (function () {
     var h = '';
     if (vt === 'arts') {
       h += '<section class="card"><div class="head"><div class="title">Artikel</div><button class="btn klein" data-act="artNeu">+ Artikel</button></div><div class="list">' + S.cfg.arts.map(function (a) {
-        return '<button class="row' + (a.aktiv === false ? ' aus' : '') + '" data-act="art" data-id="' + esc(a.id) + '"><div class="mid"><b>' + esc(a.name) + '</b><small>Flasche ' + eur(Core.cent(a.preis)) + ' · ' + a.kiste + 'er-Kiste ' + eur(Core.cent(a.preis) * a.kiste) + ' · ' + esc(rabattLabel(a)) + '</small></div><span class="pf">›</span></button>';
+        var info = a.typ === 'stueck' ? 'Normaler Artikel · ' + eur(Core.cent(a.preis)) + ' je ' + esc(a.einheit || 'Stück') : 'Flasche ' + eur(Core.cent(a.preis)) + ' · ' + a.kiste + 'er-Kiste ' + eur(Core.cent(a.preis) * a.kiste) + ' · ' + esc(rabattLabel(a));
+        return '<button class="row' + (a.aktiv === false ? ' aus' : '') + '" data-act="art" data-id="' + esc(a.id) + '"><div class="mid"><b>' + esc(a.name) + '</b><small>' + info + '</small></div><span class="pf">›</span></button>';
       }).join('') + '</div><p class="hint">Preisänderungen gelten für neue Einträge. Was schon eingetragen ist, behält den Preis von damals.</p></section>';
     } else if (vt === 'depts') {
       h += '<section class="card"><div class="head"><div class="title">Abteilungen</div><button class="btn klein" data-act="deptNeu">+ Abteilung</button></div><div class="list">' + S.cfg.depts.map(function (d) {
@@ -1889,15 +1905,18 @@ var Core = (function () {
   }
   function segBtn(feld, wert, akt, text) { return '<button type="button" data-act="seg" data-f="' + feld + '" data-v="' + wert + '" aria-pressed="' + (akt === wert) + '">' + text + '</button>'; }
   function sheetArt(id) {
-    var a = id ? Core.finde(S.cfg.arts, id) : { name: '', sorten: '', preis: 1, kiste: 24, rt: 'pct', rv: 10, aktiv: true };
-    S.ed = { typ: 'art', id: id || null, rt: a.rt || 'none' };
+    var a = id ? Core.finde(S.cfg.arts, id) : { name: '', sorten: '', preis: 1, kiste: 24, rt: 'pct', rv: 10, aktiv: true, typ: 'kiste' };
+    var atyp = a.typ === 'stueck' ? 'stueck' : 'kiste';
+    S.ed = { typ: 'art', id: id || null, rt: atyp === 'stueck' ? 'pct' : (a.rt || 'none'), atyp: atyp };
     sheet(id ? 'Artikel bearbeiten' : 'Neuer Artikel',
+      '<div class="feld"><span>Art</span><div class="seg">' + segBtn('atyp', 'kiste', atyp, 'Getränk mit Kiste') + segBtn('atyp', 'stueck', atyp, 'Normaler Artikel') + '</div></div>' +
       '<label class="feld"><span>Name</span><input data-f="name" value="' + esc(a.name) + '" maxlength="40" placeholder="Bier 0,33 l" autocomplete="off"></label>' +
-      '<label class="feld"><span>Sorten (steht klein darunter)</span><input data-f="sorten" value="' + esc(a.sorten || '') + '" maxlength="120" autocomplete="off"></label>' +
-      '<div class="zwei"><label class="feld"><span>Preis je Flasche (€)</span><input data-f="preis" data-in="artRechnen" value="' + euroFeld(a.preis) + '" inputmode="decimal"></label>' +
-      '<label class="feld"><span>Flaschen je Kiste</span><input data-f="kiste" data-in="artRechnen" value="' + a.kiste + '" inputmode="numeric"></label></div>' +
-      '<div class="feld"><span>Kistenrabatt</span><div class="seg">' + segBtn('rt', 'none', S.ed.rt, 'Keiner') + segBtn('rt', 'pct', S.ed.rt, 'Prozent') + segBtn('rt', 'abs', S.ed.rt, 'Abzug') + segBtn('rt', 'fix', S.ed.rt, 'Festpreis') + '</div></div>' +
-      '<label class="feld" id="rvFeld"><span id="rvLabel"></span><input data-f="rv" data-in="artRechnen" value="' + (a.rt === 'pct' ? String(a.rv).replace('.', ',') : euroFeld(a.rv || 0)) + '" inputmode="decimal"></label>' +
+      '<label class="feld"><span id="sortenLabel"></span><input data-f="sorten" value="' + esc(a.sorten || '') + '" maxlength="120" autocomplete="off"></label>' +
+      '<div class="zwei"><label class="feld"><span id="preisLabel"></span><input data-f="preis" data-in="artRechnen" value="' + euroFeld(a.preis) + '" inputmode="decimal"></label>' +
+      '<label class="feld" id="kisteFeld"><span>Flaschen je Kiste</span><input data-f="kiste" data-in="artRechnen" value="' + (a.kiste || 24) + '" inputmode="numeric"></label>' +
+      '<label class="feld" id="ehFeld"><span>Einheit</span><input data-f="einheit" data-in="artRechnen" value="' + esc(a.einheit || 'Stück') + '" maxlength="14" placeholder="Stück" autocomplete="off"></label></div>' +
+      '<div class="feld" id="rabFeld"><span>Kistenrabatt</span><div class="seg">' + segBtn('rt', 'none', S.ed.rt, 'Keiner') + segBtn('rt', 'pct', S.ed.rt, 'Prozent') + segBtn('rt', 'abs', S.ed.rt, 'Abzug') + segBtn('rt', 'fix', S.ed.rt, 'Festpreis') + '</div></div>' +
+      '<label class="feld" id="rvFeld"><span id="rvLabel"></span><input data-f="rv" data-in="artRechnen" value="' + (atyp === 'stueck' ? '10' : a.rt === 'pct' ? String(a.rv).replace('.', ',') : euroFeld(a.rv || 0)) + '" inputmode="decimal"></label>' +
       '<div class="msg ok" id="artInfo"></div>' +
       '<label class="sw"><span class="t">Aktiv<small>Ausgeschaltete Artikel stehen nicht mehr zur Auswahl</small></span><input type="checkbox" data-f="aktiv"' + (a.aktiv !== false ? ' checked' : '') + '></label>' +
       '<div class="reihe">' + (id ? '<button class="btn rot" data-act="artWeg" data-busy>Löschen</button>' : '') + '<button class="btn" data-act="artSpeichern" data-busy>Speichern</button></div>');
@@ -1905,11 +1924,15 @@ var Core = (function () {
   }
   function feldZahl(sel) { var el = $('#sheet [data-f="' + sel + '"]'); return el ? Number(String(el.value).replace(',', '.').replace(/[^\d.]/g, '')) || 0 : 0; }
   function artRechnen() {
-    var rt = S.ed.rt, pr = Core.cent(feldZahl('preis')), ks = Math.round(feldZahl('kiste')) || 1, rv = feldZahl('rv');
-    $('#rvFeld').hidden = rt === 'none';
+    var st = S.ed.atyp === 'stueck', rt = S.ed.rt, pr = Core.cent(feldZahl('preis')), ks = Math.round(feldZahl('kiste')) || 1, rv = feldZahl('rv');
+    $('#kisteFeld').hidden = st; $('#rabFeld').hidden = st; $('#ehFeld').hidden = !st;
+    $('#sortenLabel').textContent = st ? 'Beschreibung (steht klein darunter)' : 'Sorten (stehen klein darunter)';
+    $('#preisLabel').textContent = st ? 'Preis (€)' : 'Preis je Flasche (€)';
+    $('#sheet [data-f="name"]').placeholder = st ? 'Bratwurst' : 'Bier 0,33 l';
+    $('#rvFeld').hidden = st || rt === 'none';
     $('#rvLabel').textContent = rt === 'pct' ? 'Rabatt in Prozent' : rt === 'abs' ? 'Abzug je Kiste (€)' : 'Fester Kistenpreis (€)';
     var voll = pr * ks, rab = Core.kistenRabatt(pr, ks, rt, rv);
-    $('#artInfo').textContent = 'Kiste regulär ' + eur(voll) + (rab > 0 ? ' · mit Rabatt ' + eur(voll - rab) + ' (' + eur(rab) + ' gespart)' : ' · ohne Rabatt');
+    $('#artInfo').textContent = st ? 'Wird einzeln gezählt, ohne Kiste und ohne Rabatt: ' + eur(pr) + ' je ' + (feld('einheit') || 'Stück') : 'Kiste regulär ' + eur(voll) + (rab > 0 ? ' · mit Rabatt ' + eur(voll - rab) + ' (' + eur(rab) + ' gespart)' : ' · ohne Rabatt');
   }
   function sheetDept(id) {
     var d = id ? Core.finde(S.cfg.depts, id) : { name: '', modus: 'tag', rabatt: true, mails: [], leute: [], aktiv: true };
@@ -1959,8 +1982,8 @@ var Core = (function () {
     }
     sheet('Zugang', h);
   }
-  function sheetSkriptAlt() {
-    sheet('Google-Skript aktualisieren', '<p class="hint">Dein Google-Skript ist älter als die App und kennt das Passwort für die Einstellungen noch nicht.</p>' +
+  function sheetSkriptAlt(grund) {
+    sheet('Google-Skript aktualisieren', '<p class="hint">' + (grund || 'Dein Google-Skript ist älter als die App und kennt das Passwort für die Einstellungen noch nicht.') + '</p>' +
       '<ol class="schritte"><li>Öffne dein Projekt „Getränke-Abrechnung“ auf <code>script.google.com</code>.</li><li>Ersetze den ganzen Inhalt durch die neue <code>Code.gs</code> aus dem Paket und speichere.</li>' +
       '<li>„Bereitstellen“ → „Bereitstellungen verwalten“ → Stift → Version „Neue Version“ → „Bereitstellen“.</li><li>Tippe hier auf „Neu laden“.</li></ol><button class="btn" data-act="neuLaden">Neu laden</button>');
   }
@@ -2130,7 +2153,9 @@ var Core = (function () {
     artNeu: function () { sheetArt(null); },
     artSpeichern: function () {
       var name = feld('name'); if (!name) { toast('Name fehlt', true); return; }
-      var neu = { id: S.ed.id || undefined, name: name, sorten: feld('sorten'), preis: feldZahl('preis'), kiste: Math.round(feldZahl('kiste')) || 1, rt: S.ed.rt, rv: feldZahl('rv'), aktiv: feld('aktiv') };
+      var st = S.ed.atyp === 'stueck';
+      if (st && conn && S.skript < 7) { sheetSkriptAlt('Dein Google-Skript ist älter als die App und kennt normale Artikel noch nicht.'); return; }
+      var neu = { id: S.ed.id || undefined, name: name, sorten: feld('sorten'), preis: feldZahl('preis'), typ: st ? 'stueck' : 'kiste', einheit: st ? (feld('einheit') || 'Stück') : '', kiste: st ? 0 : (Math.round(feldZahl('kiste')) || 1), rt: st ? 'none' : S.ed.rt, rv: st ? 0 : feldZahl('rv'), aktiv: feld('aktiv') };
       var list = S.cfg.arts.map(function (a) { return a.id === S.ed.id ? neu : a; }); if (!S.ed.id) list.push(neu);
       tu(api('arts', { data: list })).then(function () { schliesse(); render(); feier('Gespeichert', name); }, function () {});
     },
