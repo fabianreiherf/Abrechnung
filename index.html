@@ -1272,8 +1272,10 @@ var Core = (function () {
       if (fuer && geprueft !== fuer.dep + '~' + fuer.k) {
         var art = herkunft(r);
         if (art === 'fremd') { var f = new Error('Dieser Link führt zu einem anderen Google-Skript, zum Beispiel zum Getränke-Bestellbuch. Die Abrechnung braucht ihr eigenes Skript mit der Code.gs aus dem Paket (Anleitung Teil 2).'); f.code = 'fremd'; throw f; }
-        if (r && r.ok) { geprueft = fuer.dep + '~' + fuer.k; S.skript = r.app === Core.APP ? (r.v || 0) : (r.cfg && r.cfg.set && typeof r.cfg.set.pw === 'boolean' ? 2 : 1); }
+        if (r && r.ok) geprueft = fuer.dep + '~' + fuer.k;
       }
+      /* Stand des Skripts bei jeder Antwort neu merken, damit ein Update ohne Neustart der App ankommt */
+      if (fuer && r && r.ok && fuer === conn) S.skript = r.app === Core.APP ? (r.v || 0) : (r.cfg && r.cfg.set && typeof r.cfg.set.pw === 'boolean' ? 2 : 1);
       if (!r || !r.ok) { var e = new Error((r && r.error) || 'Das hat nicht geklappt.'); e.code = r && r.code; throw e; }
       nimm(r); return r;
     });
@@ -1978,6 +1980,7 @@ var Core = (function () {
       h += '<div class="list"><div class="row"><div class="mid"><b>' + esc(S.me ? S.me.name : '–') + '</b><small>' + esc(S.me ? rechteText(S.me) : '') + '</small></div></div></div>' +
         '<div class="reihe"><button class="btn hell" data-act="neuLaden">Neu laden</button><button class="btn rot" data-act="trennen">Verbindung trennen</button></div>' +
         '<p class="hint">Nach dem Trennen brauchst du deinen Link, um dich wieder zu verbinden.</p>' +
+        '<p class="hint">Verbunden mit der Bereitstellung, die auf <code>…' + esc(conn.dep.slice(-8)) + '</code> endet.</p>' +
         '<p class="hint">App-Stand ' + Core.VERSION + ' · Google-Skript-Stand ' + (S.skript || '?') + (S.skript && S.skript < Core.VERSION ? ' (älter als die App, bitte die neue Code.gs einfügen und als neue Version bereitstellen)' : '') + '</p>';
     }
     sheet('Zugang', h);
