@@ -396,6 +396,45 @@
 /* im Hintergrund ausgetauschte Teile erscheinen ohne Animation */
 .still, .still * { animation: none !important; }
 
+/* ---------- Freie Abrechnung und Archiv ---------- */
+.kachel.frei { outline: 2px dashed var(--accent-2); outline-offset: -7px; }
+.frkopf { display: flex; flex-direction: column; gap: 12px; }
+.frname { font-size: 1.25rem !important; font-weight: 800 !important; padding: 14px 14px !important; }
+.frzeile { display: grid; gap: 12px; }
+.frende { display: flex; flex-direction: column; gap: 12px; margin-top: 18px; }
+.archkopf { display: grid; gap: 12px; padding: 14px; }
+.feld select { width: 100%; border: 1.5px solid var(--line); border-radius: 12px; padding: 11px 12px; font: inherit; font-size: 16px; font-weight: 600; background: var(--field); color: var(--fg); }
+a.btn { text-decoration: none; }
+.row .amt { font-weight: 800; white-space: nowrap; align-self: center; }
+#aListe { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
+@media (min-width: 700px) {
+  .frzeile { grid-template-columns: 1fr 1fr; align-items: end; }
+  .archkopf { grid-template-columns: 2fr 1fr; }
+}
+
+/* ---------- Statistik ---------- */
+.statkopf { display: grid; gap: 12px; padding: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chipbtn { border: 0; border-radius: 999px; padding: 9px 14px; font: inherit; font-size: .84rem; font-weight: 800; background: var(--field); color: var(--accent); min-height: 40px; }
+.chipbtn:active { transform: scale(.96); }
+.zweispalt { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.statsum { margin-top: -4px; }
+.statknoepfe { margin: 4px 0 12px; }
+.stats { display: flex; flex-direction: column; gap: 16px; }
+.stat-z .oben { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.stat-z .oben b { font-weight: 800; font-size: 1.05rem; overflow-wrap: anywhere; }
+.stat-z .amt { font-size: 1.2rem; font-weight: 800; white-space: nowrap; }
+.stat-z .sub { font-size: .8rem; font-weight: 600; color: var(--muted); margin-top: 4px; }
+.balken { height: 10px; border-radius: 999px; background: var(--field); margin-top: 8px; overflow: hidden; }
+.balken i { display: block; height: 100%; border-radius: 999px; background: var(--accent-2); }
+.stat-z details { margin-top: 6px; }
+.stat-z summary { font-size: .8rem; font-weight: 800; color: var(--accent); cursor: pointer; padding: 6px 0; }
+.statkopf .hint, .statkopf .feld > span { color: rgba(255,255,255,.85); }
+.statkopf .feld > span { font-weight: 700; }
+.view > .total { padding: 0 6px; }
+.view > .total b, #view > .total b { color: #fff; }
+.statsum { color: rgba(255,255,255,.85); }
+
 </style>
 </head>
 <body>
@@ -909,6 +948,14 @@ var Core = (function () {
     }
     return null;
   }
+  /* Namenslisten alphabetisch nach Nachname (letztes Wort), bei gleichem Nachnamen nach dem ganzen Namen */
+  function nachname(n) { var w = String(n || '').trim().split(/\s+/); return (w[w.length - 1] || '').toLowerCase(); }
+  function nachSort(list) {
+    return (list || []).slice().sort(function (a, b) {
+      var c = nachname(a.name).localeCompare(nachname(b.name), 'de'); if (c) return c;
+      return String(a.name || '').localeCompare(String(b.name || ''), 'de');
+    });
+  }
   /* Was eine Person von den Stammdaten sehen darf */
   function sicht(cfg, me) {
     var voll = me.r.admin || me.r.verw || me.r.abr;
@@ -916,9 +963,9 @@ var Core = (function () {
     /* wer das Zahnrad öffnen darf, bekommt Salz und Prüfsumme, damit die App das Passwort ohne Wartezeit selbst prüft */
     if (voll && pwGesetzt(cfg)) { out.set.pwS = cfg.set.pw.s; out.set.pwH = cfg.set.pw.h; }
     out.depts = cfg.depts.filter(function (d) { return voll || darfEin(me, d.id); }).map(function (d) {
-      return { id: d.id, name: d.name, modus: d.modus, rabatt: !!d.rabatt, aktiv: d.aktiv !== false, leute: d.leute || [], mails: voll ? (d.mails || []) : [] };
+      return { id: d.id, name: d.name, modus: d.modus, rabatt: !!d.rabatt, aktiv: d.aktiv !== false, leute: nachSort(d.leute), mails: voll ? (d.mails || []) : [] };
     });
-    if (me.r.admin) { out.pers = cfg.pers; out.set.admin = cfg.set.admin; out.set.kopie = cfg.set.kopie || []; }
+    if (me.r.admin) { out.pers = nachSort(cfg.pers); out.set.admin = cfg.set.admin; out.set.kopie = cfg.set.kopie || []; }
     return out;
   }
 
@@ -929,6 +976,28 @@ var Core = (function () {
     else if (rt === 'abs') r = cent(rv);
     else if (rt === 'fix') r = voll - cent(rv);
     return Math.max(0, Math.min(voll, r));
+  }
+
+  /* ---------- Positionen eines Eintrags: Preise werden eingefroren ---------- */
+  function posten(cfg, liste, nurStueck) {
+    var items = [];
+    (Array.isArray(liste) ? liste : []).forEach(function (x) {
+      var art = finde(cfg.arts, x && x.a); if (!art) return;
+      var st = art.typ === 'stueck', k = (nurStueck || st) ? 0 : ganz(x.k, 999), f = ganz(x.f, 9999);
+      if (!k && !f) return;
+      var item = { a: art.id, n: art.name, pr: cent(art.preis), ks: st ? 0 : Math.max(1, ganz(art.kiste, 999)), rt: st ? 'none' : (art.rt || 'none'), rv: st ? 0 : (Number(art.rv) || 0), k: k, f: f };
+      if (st) item.eh = art.einheit || 'Stück';   /* normaler Artikel: nur Preis je Stück, keine Kiste */
+      items.push(item);
+    });
+    return items;
+  }
+  /* ---------- Freie Abrechnung: ein Name, ein Tag, Kistenrabatt wählbar ---------- */
+  function freiBeleg(cfg, fr) {
+    var name = str(fr.name, 60) || 'Freie Abrechnung', z = istTag(fr.z) ? fr.z : '', rab = fr.rab !== false;
+    var items = posten(cfg, fr.it), d = { id: '_frei', name: name, modus: 'tag', rabatt: rab, leute: [], mails: [] };
+    var b = rechne({ arts: cfg.arts, depts: [d] }, items.length && z ? [{ id: 'frei', d: d.id, z: z, it: items, rab: rab, by: '', at: '' }] : [], d.id, (z || '0000-00').slice(0, 7));
+    b.frei = true; b.tag = z; b.mitRabatt = rab; b.items = items;
+    return b;
   }
 
   /* ---------- Abrechnung einer Abteilung für einen Monat ---------- */
@@ -956,27 +1025,32 @@ var Core = (function () {
     cfg.arts.forEach(function (a) { if (artInfo[a.id]) { artInfo[a.id].sorten = a.sorten || ''; arts.push(artInfo[a.id]); } });
     artSeen.forEach(function (id) { if (arts.indexOf(artInfo[id]) < 0) arts.push(artInfo[id]); });
 
-    var pos = {}, posOrder = [], zwischen = 0, rabatt = 0, nRab = 0, pctSet = {}, nurPct = true, kistenGes = 0, flGes = 0, stGes = 0;
+    var pos = {}, posOrder = [], zwischen = 0, rabatt = 0, nRab = 0, pctSet = {}, nurPct = true, kistenGes = 0, flGes = 0, stGes = 0, cum = {}, mArt = {};
+    /* Bei Abteilungen pro Tag zählen die Flaschen über den ganzen Monat zusammen: 28 einzelne Flaschen an verschiedenen Tagen ergeben 1 Kiste + 4 Flaschen.
+       Der Rabatt für eine volle Kiste fällt an dem Tag an, an dem sie voll wird. Dafür werden die Tage der Reihe nach durchgegangen. */
+    if (!person) order.sort(function (a, b) { return units[a].z < units[b].z ? -1 : units[a].z > units[b].z ? 1 : 0; });
     var rows = order.map(function (key) {
       var u = units[key], row = { z: u.z, p: u.p, name: u.name, von: u.von, am: u.am, arts: {}, rabatt: 0, betrag: 0 };
       Object.keys(u.grp).forEach(function (sig) {
         var g = u.grp[sig]; if (!g.n) return;
-        var voll = g.ks > 0 ? Math.floor(g.n / g.ks) : 0, rest = g.n - voll * g.ks;
+        var dk = g.ks > 0 ? Math.floor(g.n / g.ks) : 0, rest = g.n - dk * g.ks, voll = dk;
+        if (!person && g.ks > 0) { var c0 = cum[sig] || 0, c1 = c0 + g.n; cum[sig] = c1; voll = Math.floor(c1 / g.ks) - Math.floor(c0 / g.ks); }
         var jeKiste = g.rab ? kistenRabatt(g.pr, g.ks, g.rt, g.rv) : 0, rab = voll * jeKiste;
         if (!row.arts[g.a]) row.arts[g.a] = { k: 0, f: 0, n: 0, b: 0 };
-        row.arts[g.a].k += voll; row.arts[g.a].f += rest; row.arts[g.a].n += g.n; row.arts[g.a].b += g.n * g.pr - rab;
+        row.arts[g.a].k += dk; row.arts[g.a].f += rest; row.arts[g.a].n += g.n; row.arts[g.a].b += g.n * g.pr - rab;
+        if (!mArt[g.a]) mArt[g.a] = { n: 0, k: 0, f: 0, b: 0 }; mArt[g.a].b += g.n * g.pr - rab;
         row.rabatt += rab; row.betrag += g.n * g.pr - rab;
         zwischen += g.n * g.pr; rabatt += rab; kistenGes += voll; if (g.ks > 0) flGes += g.n; else stGes += g.n;
         if (rab > 0) { nRab += voll; if (g.rt === 'pct') pctSet[g.rv] = 1; else nurPct = false; }
         var pk = g.a + '|' + g.pr + '|' + g.ks;
-        if (!pos[pk]) { pos[pk] = { a: g.a, pr: g.pr, ks: g.ks, k: 0, f: 0 }; posOrder.push(pk); }
-        pos[pk].k += voll; pos[pk].f += rest;
+        if (!pos[pk]) { pos[pk] = { a: g.a, pr: g.pr, ks: g.ks, k: 0, f: 0, n: 0 }; posOrder.push(pk); }
+        pos[pk].k += voll; pos[pk].n += g.n;
       });
       return row;
     }).filter(function (r) { return Object.keys(r.arts).length > 0; });
 
     if (person) {
-      var rang = {}; (dept.leute || []).forEach(function (l, i) { rang[l.id] = i; });
+      var rang = {}; nachSort(dept.leute).forEach(function (l, i) { rang[l.id] = i; });
       rows.forEach(function (r) { var l = finde(dept.leute || [], r.p); if (l) r.name = l.name; }); /* umbenannt: der aktuelle Name gilt */
       rows.sort(function (a, b) {
         var x = rang[a.p], y = rang[b.p];
@@ -985,6 +1059,7 @@ var Core = (function () {
       });
     } else rows.sort(function (a, b) { return a.z < b.z ? -1 : a.z > b.z ? 1 : 0; });
 
+    posOrder.forEach(function (pk) { var q = pos[pk]; q.f = q.n - q.k * q.ks; var m = mArt[q.a]; m.n += q.n; m.k += q.k; m.f += q.f; });
     var positionen = [];
     arts.forEach(function (ai) {
       posOrder.forEach(function (pk) {
@@ -995,15 +1070,16 @@ var Core = (function () {
     });
     var pcts = Object.keys(pctSet);
     return {
-      dept: dept, monat: monat, person: person, arts: arts, rows: rows, positionen: positionen,
+      dept: dept, monat: monat, person: person, arts: arts, rows: rows, positionen: positionen, monatArt: mArt,
       zwischen: zwischen, rabatt: rabatt, nRab: nRab, rabPct: (nurPct && pcts.length === 1) ? Number(pcts[0]) : null,
       summe: zwischen - rabatt, kisten: kistenGes, flaschen: flGes, stueck: stGes, leer: rows.length === 0
     };
   }
 
   /* ---------- Anfragen bearbeiten ----------
-     io: { adminKey, cfg(), saveCfg(c), entries(monate|null), add(e), del(ids), mail(o), now(), id() } */
-  var APP = 'sve-getraenke-abrechnung', VERSION = 8;
+     io: { adminKey, cfg(), saveCfg(c), entries(monate|null), add(e), del(ids), mail(o), now(), id(),
+           ablegen(o) → { fid, url }, archivAdd(rec), archivListe(), archivHol(id), archivSetze(rec), altVersand() } */
+  var APP = 'sve-getraenke-abrechnung', VERSION = 10;
   /* Jede Antwort trägt die Kennung, damit die App merkt, wenn sie mit einem anderen Skript verbunden ist */
   function handle(req, io) { var r = bearbeite(req, io); r.app = APP; r.v = VERSION; return r; }
   function bearbeite(req, io) {
@@ -1014,6 +1090,19 @@ var Core = (function () {
     function monate(list) { return (Array.isArray(list) ? list : []).filter(istMonat).slice(0, 24); }
     function meine(list) { return (me.r.admin || me.r.verw || me.r.abr) ? list : list.filter(function (e) { return darfEin(me, e.d); }); }
     function antwort(extra) { var o = { ok: true, me: me, cfg: sicht(cfg, me) }; for (var k in extra) o[k] = extra[k]; return o; }
+    function dateiOk(x) { var d = str(x, 90).replace(/[^\wäöüÄÖÜß.-]/g, '_'); return /\.pdf$/i.test(d) ? d : (d || 'Abrechnung') + '.pdf'; }
+    /* Kopfdaten der PDF einfrieren, damit sie im Archiv genauso wieder gezeichnet wird */
+    function erstellt(rq) { var e = rq.erstellt || {}; return { am: istTag(e.am) ? e.am : io.now().slice(0, 10), von: me.name, hinweis: cfg.set.hinweis || '', tage: cfg.set.tage !== false }; }
+    /* PDF in Google Drive ablegen; klappt das nicht, geht trotzdem nichts verloren */
+    function ablegen(pdf, datei, ordner) {
+      try { return io.ablegen({ pdf: String(pdf), datei: datei, ordner: ordner }) || {}; }
+      catch (err) { return { fehler: 'Die PDF konnte nicht in Google Drive abgelegt werden (' + (err && err.message ? err.message : err) + '). Im Google-Skript einmal „einrichten“ ausführen und den Zugriff auf Drive erlauben.' }; }
+    }
+    function archiviere(r, ab) {
+      r.id = r.id || io.id(); r.at = io.now(); r.by = me.name; r.byId = me.id; r.fid = ab.fid || ''; r.url = ab.url || ''; r.nach = [];
+      io.archivAdd(r); return r;
+    }
+    function leicht(r) { var o = {}; for (var k in r) if (k !== 'beleg') o[k] = r[k]; o.hatBeleg = !!r.beleg; return o; }
 
     if (a === 'init' || a === 'load') {
       var ms = monate(req.monate);
@@ -1030,15 +1119,7 @@ var Core = (function () {
         pl = finde(dept.leute || [], b.p);
         if (!pl) return { ok: false, error: 'Diese Person steht nicht mehr in der Liste.' };
       } else if (!istTag(b.z)) return { ok: false, error: 'Datum fehlt.' };
-      var items = [];
-      (Array.isArray(b.it) ? b.it : []).forEach(function (x) {
-        var art = finde(cfg.arts, x.a); if (!art) return;
-        var st = art.typ === 'stueck', k = (person || st) ? 0 : ganz(x.k, 999), f = ganz(x.f, 9999);
-        if (!k && !f) return;
-        var item = { a: art.id, n: art.name, pr: cent(art.preis), ks: st ? 0 : Math.max(1, ganz(art.kiste, 999)), rt: st ? 'none' : (art.rt || 'none'), rv: st ? 0 : (Number(art.rv) || 0), k: k, f: f };
-        if (st) item.eh = art.einheit || 'Stück';   /* normaler Artikel: nur Preis je Stück, keine Kiste */
-        items.push(item);
-      });
+      var items = posten(cfg, b.it, person);
       var monat = b.z.slice(0, 7), wunschId = /^[a-z0-9]{8,40}$/i.test(String(b.id || '')) ? String(b.id) : null;
       if (wunschId) {
         var schon = io.entries([monat]);
@@ -1094,7 +1175,7 @@ var Core = (function () {
           var ln = str(l.name, 40); if (!ln) return;
           leute.push({ id: l.id && !finde(leute, l.id) ? str(l.id, 40) : neueId(leute, ln), name: ln });
         });
-        nd.push({ id: id, name: name, modus: x.modus === 'person' ? 'person' : 'tag', rabatt: !!x.rabatt, mails: mailsVon(x.mails), leute: leute, aktiv: x.aktiv !== false });
+        nd.push({ id: id, name: name, modus: x.modus === 'person' ? 'person' : 'tag', rabatt: !!x.rabatt, mails: mailsVon(x.mails), leute: nachSort(leute), aktiv: x.aktiv !== false });
       });
       if (!nd.length) return { ok: false, error: 'Mindestens eine Abteilung muss bleiben.' };
       cfg.depts = nd; io.saveCfg(cfg);
@@ -1110,7 +1191,7 @@ var Core = (function () {
         var ln = str(l.name, 40); if (!ln) return;
         nl.push({ id: l.id && !finde(nl, l.id) ? str(l.id, 40) : neueId(nl, ln), name: ln });
       });
-      dl.leute = nl; io.saveCfg(cfg);
+      dl.leute = nachSort(nl); io.saveCfg(cfg);
       return antwort({});
     }
 
@@ -1148,6 +1229,7 @@ var Core = (function () {
       var ex = p.id ? finde(cfg.pers, p.id) : null;
       if (ex) { ex.name = pn; ex.r = rechte(p.r); ex.gesperrt = !!p.gesperrt; if (p.neuerLink) ex.tok = io.id() + io.id(); }
       else { ex = { id: neueId(cfg.pers, pn), name: pn, tok: io.id() + io.id(), r: rechte(p.r), gesperrt: false, seit: io.now() }; cfg.pers.push(ex); }
+      cfg.pers = nachSort(cfg.pers);
       io.saveCfg(cfg);
       return antwort({ person: ex.id });
     }
@@ -1167,18 +1249,72 @@ var Core = (function () {
       if (!an.length) return { ok: false, error: 'Für ' + sd.name + ' ist keine E-Mail-Adresse hinterlegt.' };
       if (!req.pdf || String(req.pdf).length > 6000000) return { ok: false, error: 'Die PDF fehlt oder ist zu groß.' };
       var kopie = (cfg.set.kopie || []).filter(function (m) { return an.indexOf(m) < 0; });
-      io.mail({ an: an, kopie: kopie, betreff: str(req.betreff, 150), text: String(req.text || '').slice(0, 4000), pdf: String(req.pdf), datei: str(req.datei, 80).replace(/[^\wäöüÄÖÜß. -]/g, '_') || 'Abrechnung.pdf' });
+      var datei = dateiOk(req.datei);
+      io.mail({ an: an, kopie: kopie, betreff: str(req.betreff, 150), text: String(req.text || '').slice(0, 4000), pdf: String(req.pdf), datei: datei });
+      var sb = rechne(cfg, io.entries([req.monat]), sd.id, req.monat); sb.erstellt = erstellt(req);
+      var ab = ablegen(req.pdf, datei, req.monat);
+      archiviere({ art: 'abt', d: sd.id, name: sd.name, zeit: req.monat, summe: sb.summe, an: an, kopie: kopie, wie: 'mail', datei: datei, beleg: sb, betreff: str(req.betreff, 150) }, ab);
       cfg = io.cfg();
       cfg.sent = cfg.sent || {};
       cfg.sent[req.monat + '|' + sd.id] = { at: io.now(), by: me.name, an: an, sum: Math.round(Number(req.summe) || 0) };
       io.saveCfg(cfg);
-      return antwort({ gesendet: an });
+      return antwort({ gesendet: an, hinweis: ab.fehler || '' });
+    }
+
+    /* ---------- Freie Abrechnung: per Mail senden oder exportiert ablegen ---------- */
+    if (a === 'frei') {
+      if (!(me.r.admin || me.r.abr)) return { ok: false, error: 'Dafür fehlt dir das Recht „Abrechnen“.' };
+      var fid = /^[a-z0-9]{8,40}$/i.test(String(req.id || '')) ? String(req.id) : io.id();
+      var da = io.archivHol(fid);
+      if (da) return antwort({ archiv: leicht(da), schon: true });
+      var fname = str(req.name, 60), fwie = req.wie === 'export' ? 'export' : 'mail';
+      if (!fname) return { ok: false, error: 'Bitte oben eintragen, für wen die Abrechnung ist.' };
+      if (!istTag(req.z)) return { ok: false, error: 'Datum fehlt.' };
+      var fb = freiBeleg(cfg, { name: fname, z: req.z, rab: req.rab, it: req.it });
+      if (fb.leer) return { ok: false, error: 'Bitte mindestens eine Menge eintragen.' };
+      fb.erstellt = erstellt(req); delete fb.items;
+      if (!req.pdf || String(req.pdf).length > 6000000) return { ok: false, error: 'Die PDF fehlt oder ist zu groß.' };
+      var fan = [], fkopie = [], fdatei = dateiOk(req.datei);
+      if (fwie === 'mail') {
+        fan = mailsVon(req.an);
+        if (!fan.length) return { ok: false, error: 'Bitte eine gültige E-Mail-Adresse eintragen.' };
+        fkopie = (cfg.set.kopie || []).filter(function (m) { return fan.indexOf(m) < 0; });
+        io.mail({ an: fan, kopie: fkopie, betreff: str(req.betreff, 150), text: String(req.text || '').slice(0, 4000), pdf: String(req.pdf), datei: fdatei });
+      }
+      var fab = ablegen(req.pdf, fdatei, req.z.slice(0, 7));
+      var frec = archiviere({ id: fid, art: 'frei', name: fname, zeit: req.z, summe: fb.summe, an: fan, kopie: fkopie, wie: fwie, datei: fdatei, beleg: fb, betreff: str(req.betreff, 150) }, fab);
+      return antwort({ archiv: leicht(frec), hinweis: fab.fehler || '' });
+    }
+
+    /* ---------- Archiv: alles, was die App verlassen hat ---------- */
+    if (a === 'archiv') {
+      if (!(me.r.admin || me.r.abr)) return { ok: false, error: 'Dafür fehlt dir das Recht „Abrechnen“.' };
+      return antwort({ archiv: io.archivListe().map(leicht), alt: io.altVersand() });
+    }
+    if (a === 'archivEins') {
+      if (!(me.r.admin || me.r.abr)) return { ok: false, error: 'Dafür fehlt dir das Recht „Abrechnen“.' };
+      var ae = io.archivHol(String(req.id || ''));
+      if (!ae) return { ok: false, error: 'Diese Abrechnung gibt es im Archiv nicht.' };
+      return antwort({ eins: ae });
+    }
+    if (a === 'nachsenden') {
+      if (!(me.r.admin || me.r.abr)) return { ok: false, error: 'Dafür fehlt dir das Recht „Abrechnen“.' };
+      var nr = io.archivHol(String(req.id || ''));
+      if (!nr) return { ok: false, error: 'Diese Abrechnung gibt es im Archiv nicht.' };
+      var nan = mailsVon(req.an);
+      if (!nan.length) return { ok: false, error: 'Bitte eine gültige E-Mail-Adresse eintragen.' };
+      if (!nr.fid && (!req.pdf || String(req.pdf).length > 6000000)) return { ok: false, error: 'Die PDF fehlt.' };
+      var nkopie = (cfg.set.kopie || []).filter(function (m) { return nan.indexOf(m) < 0; });
+      io.mail({ an: nan, kopie: nkopie, betreff: str(req.betreff, 150) || nr.betreff || 'Getränkeabrechnung', text: String(req.text || '').slice(0, 4000), fid: nr.fid || null, pdf: nr.fid ? null : String(req.pdf), datei: nr.datei || 'Abrechnung.pdf' });
+      nr.nach = (nr.nach || []).concat([{ at: io.now(), by: me.name, an: nan }]).slice(-20);
+      io.archivSetze(nr);
+      return antwort({ archiv: leicht(nr), gesendet: nan });
     }
 
     return { ok: false, error: 'Unbekannte Anfrage.' };
   }
 
-  return { APP: APP, VERSION: VERSION, sha256: sha256, standard: standard, handle: handle, rechne: rechne, kistenRabatt: kistenRabatt, darfEin: darfEin, darfIrgendEin: darfIrgendEin, mailsVon: mailsVon, cent: cent, istTag: istTag, istMonat: istMonat, finde: finde };
+  return { APP: APP, VERSION: VERSION, nachSort: nachSort, sha256: sha256, posten: posten, freiBeleg: freiBeleg, standard: standard, handle: handle, rechne: rechne, kistenRabatt: kistenRabatt, darfEin: darfEin, darfIrgendEin: darfIrgendEin, mailsVon: mailsVon, cent: cent, istTag: istTag, istMonat: istMonat, finde: finde };
 })();
 
 </script>
@@ -1228,7 +1364,7 @@ var Core = (function () {
   /* ---------- Zustand ---------- */
   var conn = LS.get('conn');
   var S = { me: null, cfg: null, ent: {}, frisch: {}, laden: {}, fehler: {}, screen: 'start', hinter: 0, skript: 0, offen: false, pw: null, letzter: null, kopf: '', neu: null, sumAkt: 0, dept: null, tag: heute(), monat: heute().slice(0, 7), abr: heute().slice(0, 7),
-    draft: {}, pq: {}, pwer: null, ed: null, busy: 0, sperre: null, startFehler: null };
+    draft: {}, fr: null, st: null, arch: { liste: null, alt: [], fehler: '', suche: '', monat: '', laden: false, cur: null }, pq: {}, pwer: null, ed: null, busy: 0, sperre: null, startFehler: null };
   var view = $('#view');
   var ruhig = false; try { ruhig = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) {}
 
@@ -1261,6 +1397,12 @@ var Core = (function () {
       add: function (e) { demoDb.ent.push(e); sichern(); },
       del: function (ids) { demoDb.ent = demoDb.ent.filter(function (e) { return ids.indexOf(e.id) < 0; }); sichern(); },
       mail: function () {},
+      ablegen: function () { return {}; },
+      archivAdd: function (r) { demoDb.archiv = demoDb.archiv || []; demoDb.archiv.push(JSON.parse(JSON.stringify(r))); sichern(); },
+      archivListe: function () { return (demoDb.archiv || []).slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; }).map(function (r) { var o = JSON.parse(JSON.stringify(r)); o.beleg = r.beleg ? 1 : 0; return o; }); },
+      archivHol: function (id) { var r = (demoDb.archiv || []).filter(function (x) { return x.id === id; })[0]; return r ? JSON.parse(JSON.stringify(r)) : null; },
+      archivSetze: function (r) { demoDb.archiv = (demoDb.archiv || []).map(function (x) { return x.id === r.id ? JSON.parse(JSON.stringify(r)) : x; }); sichern(); },
+      altVersand: function () { return []; },
       now: function () { return new Date().toISOString(); },
       id: function () { var s = ''; for (var i = 0; i < 16; i++) s += Math.floor(Math.random() * 16).toString(16); return s; }
     };
@@ -1392,6 +1534,8 @@ var Core = (function () {
   function start() {
     var q = liesLink(location.search + location.hash);
     if (q && q.dep) { conn = { dep: q.dep, k: q.k }; LS.set('conn', conn); }
+    /* Nach „Neu laden“ beginnt die App immer auf der Startseite, der Verlaufseintrag soll dazu passen */
+    try { history.replaceState(null, '', location.href); } catch (e) {}
     ladeAlles();
   }
   function ladeAlles() {
@@ -1418,9 +1562,9 @@ var Core = (function () {
   /* ---------- Aufbau ---------- */
   function rechte() { var r = (S.me && S.me.r) || {}; return { ein: S.me ? Core.darfIrgendEin(S.me) : false, abr: !!(r.admin || r.abr), verw: !!(r.admin || r.verw), admin: !!r.admin }; }
   /* Seiten: start → dept (Eintragen) oder → admin (Zahnrad mit Passwort) → abr / arts / depts / pers / set */
-  var TITEL = { admin: 'Einstellungen', abr: 'Abrechnung', arts: 'Artikel und Preise', depts: 'Abteilungen', pers: 'Personen und Rechte', set: 'Sonstiges' };
-  var BRAUCHT = { abr: 'abr', arts: 'verw', depts: 'verw', pers: 'admin', set: 'admin' };
-  function tiefe(sc) { return sc === 'start' ? 0 : (sc === 'dept' || sc === 'admin') ? 1 : 2; }
+  var TITEL = { admin: 'Einstellungen', stat: 'Statistik', frei: 'Freie Abrechnung', archiv: 'Versendete Abrechnungen', abr: 'Abrechnung', arts: 'Artikel und Preise', depts: 'Abteilungen', pers: 'Personen und Rechte', set: 'Sonstiges' };
+  var BRAUCHT = { abr: 'abr', archiv: 'abr', stat: 'abr', arts: 'verw', depts: 'verw', pers: 'admin', set: 'admin' };
+  function tiefe(sc) { return sc === 'start' ? 0 : (sc === 'dept' || sc === 'admin' || sc === 'frei') ? 1 : 2; }
   function eltern(sc) { return tiefe(sc) === 2 ? 'admin' : 'start'; }
   var histOk = true;
   function geh(sc) { S.screen = sc; try { history.pushState({ s: sc }, ''); } catch (e) { histOk = false; } render(); window.scrollTo(0, 0); }
@@ -1446,7 +1590,8 @@ var Core = (function () {
     }
     if (!S.cfg) { $('#demo').hidden = true; setzKopf('marke', marke(false)); S.letzter = null; view.innerHTML = S.startFehler ? '<section class="card"><div class="title">Keine Verbindung</div><p class="hint">' + esc(S.startFehler) + '</p><button class="btn" data-act="neuLaden">Noch einmal versuchen</button></section>' : '<p class="note">Lade …</p>'; return; }
     var r = rechte(), sc = S.screen;
-    if (sc !== 'start' && sc !== 'dept' && !S.offen) sc = 'start';
+    if (sc !== 'start' && sc !== 'dept' && sc !== 'frei' && !S.offen) sc = 'start';
+    if (sc === 'frei' && !r.abr) sc = 'start';
     if (BRAUCHT[sc] && !r[BRAUCHT[sc]]) sc = 'admin';
     if (sc === 'admin' && !(r.abr || r.verw || r.admin)) sc = 'start';
     if (sc === 'dept' && !aktDept()) sc = 'start';
@@ -1456,22 +1601,25 @@ var Core = (function () {
     if (sc === 'start') setzKopf('start', marke(true));
     else { var titel = sc === 'dept' ? aktDept().name : TITEL[sc]; setzKopf(sc + '|' + titel, '<div class="top"><button class="rund" type="button" data-act="zurueck" aria-label="Zurück">' + I.l + '</button><h1 class="top-t">' + esc(titel) + '</h1><span class="top-r"></span></div>'); }
     view.setAttribute('data-sc', sc);
-    view.innerHTML = sc === 'start' ? vStart() : sc === 'dept' ? vDept() : sc === 'admin' ? vAdmin() : sc === 'abr' ? vAbr() : vVerw(sc);
+    view.innerHTML = seiteHtml(sc);
     if (S.letzter !== sc) {
       var richt = S.letzter == null ? 'auf' : tiefe(sc) > tiefe(S.letzter) ? 'vor' : tiefe(sc) < tiefe(S.letzter) ? 'rueck' : 'auf';
       S.letzter = sc; view.className = ''; void view.offsetWidth; view.className = richt;
       clearTimeout(render.t); render.t = setTimeout(function () { view.className = ''; }, 700);
     }
     if (sc === 'dept') sumUpd();
+    if (sc === 'frei') frUpd();
     S.neu = null;
     zeigBusy();
   }
+  function seiteHtml(sc) { return sc === 'start' ? vStart() : sc === 'dept' ? vDept() : sc === 'frei' ? vFrei() : sc === 'admin' ? vAdmin() : sc === 'abr' ? vAbr() : sc === 'archiv' ? vArchiv() : sc === 'stat' ? vStat() : vVerw(sc); }
   /* Neue Daten im Hintergrund: nur die Teile austauschen, die sich wirklich geändert haben – ohne Animation, ohne Eingaben zu stören */
   function leise() {
     var sc = S.sperre ? null : S.screen;
+    if (sc === 'frei') { zeigBusy(); return; }
     if (!sc || sc !== S.letzter || !view.children.length || view.className) { render(); return; }
     var tmp = document.createElement('div');
-    tmp.innerHTML = sc === 'start' ? vStart() : sc === 'dept' ? vDept() : sc === 'admin' ? vAdmin() : sc === 'abr' ? vAbr() : vVerw(sc);
+    tmp.innerHTML = seiteHtml(sc);
     var alt = view.children, neu = tmp.children;
     if (alt.length !== neu.length) { render(); return; }
     for (var i = neu.length - 1; i >= 0; i--) {
@@ -1486,15 +1634,16 @@ var Core = (function () {
   }
   function vStart() {
     var depts = meineDepts(), r = rechte();
-    if (!depts.length) return '<section class="card"><p class="empty">' + (r.abr || r.verw ? 'Für dich ist keine Abteilung zum Eintragen freigegeben. Alles Weitere findest du über das Zahnrad oben rechts.' : 'Für dich ist hier noch nichts freigegeben. Frag den Admin.') + '</p></section>';
+    if (!depts.length && !r.abr) return '<section class="card"><p class="empty">' + (r.verw ? 'Für dich ist keine Abteilung zum Eintragen freigegeben. Alles Weitere findest du über das Zahnrad oben rechts.' : 'Für dich ist hier noch nichts freigegeben. Frag den Admin.') + '</p></section>';
+    var fd = r.abr ? frEntwurf() : null;
     return '<p class="frage">Für wen trägst du ein?</p><div class="kacheln">' + depts.map(function (d, i) {
       return '<button class="kachel" type="button" style="--i:' + i + '" data-act="oeffne" data-id="' + esc(d.id) + '"><span class="kt"><b>' + esc(d.name) + '</b></span>' + I.r + '</button>';
-    }).join('') + '</div>';
+    }).join('') + (r.abr ? '<button class="kachel frei" type="button" style="--i:' + depts.length + '" data-act="freiAuf"><span class="kt"><b>+ Freie Abrechnung</b><small>' + (fd ? 'Entwurf: ' + esc(fd.name.trim() || 'ohne Namen') : 'Eigener Name, sofort senden oder exportieren') + '</small></span>' + I.r + '</button>' : '') + '</div>';
   }
   function vDept() { var d = aktDept(); return d.modus === 'person' ? vEinPerson(d) : vEinTag(d); }
   function vAdmin() {
     var r = rechte(), m = [];
-    if (r.abr) m.push(['abr', 'Abrechnung', 'Monat ansehen und per Mail senden']);
+    if (r.abr) { m.push(['abr', 'Abrechnung', 'Monat ansehen und per Mail senden']); m.push(['archiv', 'Versendete Abrechnungen', 'Alle verschickten PDFs, auch die freien']); m.push(['stat', 'Statistik', 'Wie viel jede Abteilung verzehrt hat, mit PDF']); }
     if (r.verw) { m.push(['arts', 'Artikel und Preise', 'Getränke, Preise, Kistenrabatt']); m.push(['depts', 'Abteilungen', 'Namen, E-Mail-Adressen, Spieler']); }
     if (r.admin) { m.push(['pers', 'Personen und Rechte', 'Wer darf eintragen, abrechnen, verwalten']); m.push(['set', 'Sonstiges', 'Passwort, Hinweistext, Kopie der Mails']); }
     return '<div class="kacheln">' + m.map(function (x, i) {
@@ -1563,6 +1712,8 @@ var Core = (function () {
     if (an && !war && live && !ruhig) { karte.classList.remove('wach'); void karte.offsetWidth; karte.classList.add('wach'); }
     sum.hidden = !an; if (an) sum.textContent = eur(betrag);
   }
+  /* Alle Einträge einer Abteilung im Monat: Flaschen zählen über den Monat zusammen, deshalb wird immer der ganze Monat gerechnet */
+  function monatBill(d, m, extra) { return Core.rechne(S.cfg, (S.ent[m] || []).filter(function (e) { return e.d === d.id && !e.p; }).concat(extra || []), d.id, m); }
   function tagEintraege(d, z) { return (S.ent[z.slice(0, 7)] || []).filter(function (e) { return e.d === d.id && e.z === z && !e.p; }); }
   function draftItems(q, nurFl) {
     var out = [];
@@ -1582,8 +1733,8 @@ var Core = (function () {
     h += '<div class="frage-z"><p class="frage">Was wurde getrunken?</p>' + (d.rabatt ? '<span class="chip klein">mit Kistenrabatt</span>' : '') + '</div>';
     h += '<div class="gks">' + aktArts().map(function (a, i) { return artKarte('d', a, i, S.draft[a.id] || {}, true, d.rabatt); }).join('') + '</div>';
     h += '<div class="bar gross" id="bar"><div class="txt"><small id="sumS"></small><b class="num" id="sumB">0,00 €</b></div><button class="btn" data-act="buchen" id="buchBtn"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.500l4.500 4.500L19 7.500"/></svg>Eintragen</button></div>';
-    var list = tagEintraege(d, S.tag), bill = Core.rechne(S.cfg, list, d.id, m);
-    h += '<section class="card schmal"><div class="head"><div class="title">' + (istHeute ? 'Heute schon eingetragen' : 'Am ' + esc(tagText(S.tag).slice(0, 6)) + ' eingetragen') + '</div><div class="title num">' + (list.length ? eur(bill.summe) : '') + '</div></div>';
+    var list = tagEintraege(d, S.tag), mb = monatBill(d, m), tr = mb.rows.filter(function (r) { return r.z === S.tag; })[0];
+    h += '<section class="card schmal"><div class="head"><div class="title">' + (istHeute ? 'Heute schon eingetragen' : 'Am ' + esc(tagText(S.tag).slice(0, 6)) + ' eingetragen') + '</div><div class="title num">' + (tr ? eur(tr.betrag) : '') + '</div></div>';
     if (!list.length) h += '<p class="empty">Noch nichts. Was du oben einträgst, erscheint hier.</p>';
     else {
       h += '<div class="list">' + list.map(function (e) {
@@ -1591,7 +1742,7 @@ var Core = (function () {
         return '<div class="row' + (S.neu === e.id ? ' neu' : '') + '"><div class="mid"><b>' + esc(inhalt(e)) + '</b><small>' + esc(e.by) + ' · ' + esc(zeitText(e.at)) + (e.lokal ? ' · <span class="unterwegs">wird gespeichert</span>' : '') + '</small></div>' +
           (darf ? '<button class="mini" data-act="loeschen" data-id="' + esc(e.id) + '" aria-label="Eintrag löschen">' + I.weg + '</button>' : '') + '</div>';
       }).join('') + '</div>';
-      if (bill.rabatt > 0) h += '<p class="hint">Darin ' + eur(bill.rabatt) + ' Kistenrabatt für ' + mehrzahl(bill.nRab, 'volle Kiste', 'volle Kisten') + '.</p>';
+      if (tr && tr.rabatt > 0) h += '<p class="hint">Darin ' + eur(tr.rabatt) + ' Kistenrabatt. Einzelne Flaschen zählen über den ganzen Monat zusammen.</p>';
     }
     return h + '</section>';
   }
@@ -1613,23 +1764,22 @@ var Core = (function () {
   }
   function sumUpd(live) {
     var d = aktDept(); if (!d || d.modus === 'person' || !$('#sumB')) return;
-    var m = S.tag.slice(0, 7), basis = tagEintraege(d, S.tag), items = draftItems(S.draft);
-    var vor = Core.rechne(S.cfg, basis, d.id, m);
-    var mit = items.length ? Core.rechne(S.cfg, basis.concat([{ id: 'neu', d: d.id, z: S.tag, it: items, rab: !!d.rabatt, by: '', at: '' }]), d.id, m) : vor;
+    var m = S.tag.slice(0, 7), items = draftItems(S.draft);
+    var vor = monatBill(d, m);
+    var mit = items.length ? monatBill(d, m, [{ id: 'neu', d: d.id, z: S.tag, it: items, rab: !!d.rabatt, by: '', at: '' }]) : vor;
     var neu = mit.summe - vor.summe, rab = mit.rabatt - vor.rabatt, btn = $('#buchBtn'), bar = $('#bar'), warLeer = btn.disabled;
     S.sumAkt = neu; zaehl($('#sumB'), neu, live);
     $('#sumS').textContent = !items.length ? 'Tippe auf + oder auf die Zahl' : mengenText(items) + (rab > 0 ? ' · ' + eur(rab) + ' Rabatt' : '');
     btn.disabled = !items.length || S.busy > 0;
     bar.classList.toggle('leer', !items.length);
     if (live && !ruhig) { bar.classList.remove('wipp'); void bar.offsetWidth; bar.classList.add('wipp'); if (warLeer && !btn.disabled) { btn.classList.remove('bereit'); void btn.offsetWidth; btn.classList.add('bereit'); } }
-    var row = mit.rows[0] || { arts: {} }, rowVor = vor.rows[0] || { arts: {} };
     aktArts().forEach(function (a) {
-      var q = S.draft[a.id] || {}, x = row.arts[a.id], v = rowVor.arts[a.id];
+      var q = S.draft[a.id] || {}, x = mit.monatArt[a.id], v = vor.monatArt[a.id];
       gkStand(view, a, q, (x ? x.b : 0) - (v ? v.b : 0), live);
       var el = $('[data-zus="' + CSS.escape(a.id) + '"]', view); if (!el) return;
-      var zeig = (q.k || q.f) && x && x.k > (q.k || 0);
+      var zeig = (q.k || q.f) && x && x.k > (v ? v.k : 0) + (q.k || 0);
       if (!zeig) { el.hidden = true; return; }
-      var pr = Core.cent(a.preis), jr = d.rabatt ? Core.kistenRabatt(pr, a.kiste, a.rt, a.rv) : 0, text = (v ? 'Am Tag zusammen: ' : 'Das sind ') + mehrzahl(x.k, 'Kiste', 'Kisten') + (x.f ? ' + ' + mehrzahl(x.f, 'Flasche', 'Flaschen') : '') + (jr > 0 ? ' · Kistenrabatt ' + eur(jr * x.k) : '');
+      var pr = Core.cent(a.preis), jr = d.rabatt ? Core.kistenRabatt(pr, a.kiste, a.rt, a.rv) : 0, text = 'Im Monat zusammen: ' + mehrzahl(x.k, 'Kiste', 'Kisten') + (x.f ? ' + ' + mehrzahl(x.f, 'Flasche', 'Flaschen') : '') + (jr > 0 ? ' · Kistenrabatt ' + eur(jr * x.k) : '');
       if (el.hidden || el.textContent !== text) { el.textContent = text; el.hidden = false; }
     });
   }
@@ -1712,20 +1862,24 @@ var Core = (function () {
   function bill(id, m) { return Core.rechne(S.cfg, S.ent[m] || [], id, m); }
   function rabattText(b) { return 'Kistenrabatt ' + (b.rabPct != null ? zahlDe(b.rabPct, b.rabPct % 1 ? 1 : 0) + ' % ' : '') + 'auf ' + mehrzahl(b.nRab, 'Kiste', 'Kisten'); }
   function zeileText(b, r) { return b.arts.filter(function (a) { return r.arts[a.a]; }).map(function (a) { var x = r.arts[a.a], t = []; if (a.st) return x.f + ' × ' + a.name; if (x.k) t.push(x.k + ' Ki.'); if (x.f) t.push(x.f + ' Fl.'); return t.join(' + ') + ' ' + kurz(a.name); }).join(', '); }
-  function sheetAnsehen(id) {
-    var b = bill(id, S.abr), st = versandStatus({ d: b.dept, b: b }, S.abr);
-    sheet(esc(b.dept.name), '<p class="hint">' + esc(monatText(S.abr)) + ' · <span class="stat ' + st.cls + '">' + esc(st.txt) + '</span></p>' +
+  function sheetBeleg(titel, hint, b, knoepfe) {
+    sheet(esc(titel), '<p class="hint">' + hint + '</p>' +
       '<div class="blaetter" id="blaetter" tabindex="0" aria-label="Abrechnung als PDF, so wie sie verschickt wird"></div><p class="hint mitte" id="zoomHint">Tippe auf die Seite zum Vergrößern.</p>' +
-      '<div class="reihe">' + (NUR_VORSCHAU ? '' : '<button class="btn hell" data-act="pdf" data-id="' + esc(id) + '">PDF teilen</button>') + '<button class="btn" data-act="senden" data-id="' + esc(id) + '" data-busy>Senden</button></div>', 'hoch');
-    var box = $('#blaetter'), seiten = belegSeiten(b);
+      '<div class="reihe">' + knoepfe + '</div>', 'hoch');
+    var box = $('#blaetter'), seiten = b._stat ? statSeiten(b._stat) : belegSeiten(b);
     seiten.forEach(function (c, i) { c.className = 'blatt'; c.setAttribute('role', 'img'); c.setAttribute('aria-label', 'Seite ' + (i + 1) + ' von ' + seiten.length); c.setAttribute('data-act', 'zoom'); box.appendChild(c); });
   }
-  function mailBetreff(b) { return 'Getränkeabrechnung ' + monatText(b.monat) + ' – ' + b.dept.name; }
+  function sheetAnsehen(id) {
+    var b = bill(id, S.abr), st = versandStatus({ d: b.dept, b: b }, S.abr);
+    sheetBeleg(b.dept.name, esc(monatText(S.abr)) + ' · <span class="stat ' + st.cls + '">' + esc(st.txt) + '</span>',
+      b, (NUR_VORSCHAU ? '' : '<button class="btn hell" data-act="pdf" data-id="' + esc(id) + '">PDF teilen</button>') + '<button class="btn" data-act="senden" data-id="' + esc(id) + '" data-busy>Senden</button>');
+  }
+  function mailBetreff(b) { return b.frei ? 'Getränkeabrechnung ' + b.dept.name + ' (' + tagText(b.tag) + ')' : 'Getränkeabrechnung ' + monatText(b.monat) + ' – ' + b.dept.name; }
   function mailText(b) {
     var hin = (S.cfg.set.hinweis || '').trim();
-    return 'Hallo,\n\nim Anhang findet ihr die Getränkeabrechnung für ' + b.dept.name + ', ' + monatText(b.monat) + '.\n\nZu zahlen: ' + eur(b.summe) + '\n' + (hin ? '\n' + hin + '\n' : '') + '\nSportliche Grüße\n' + VEREIN;
+    return 'Hallo,\n\nim Anhang findet ihr die Getränkeabrechnung für ' + b.dept.name + ', ' + (b.frei ? 'vom ' + tagText(b.tag) : monatText(b.monat)) + '.\n\nZu zahlen: ' + eur(b.summe) + '\n' + (hin ? '\n' + hin + '\n' : '') + '\nSportliche Grüße\n' + VEREIN;
   }
-  function dateiName(b) { return 'Getraenkeabrechnung_' + b.monat + '_' + b.dept.name.replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue').replace(/ß/g, 'ss').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') + '.pdf'; }
+  function dateiName(b) { return 'Getraenkeabrechnung_' + (b.frei ? b.tag : b.monat) + '_' + b.dept.name.replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue').replace(/ß/g, 'ss').replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '') + '.pdf'; }
   function sheetSenden(ids) {
     var m = S.abr, alle = ids.map(function (id) { return bill(id, m); });
     var geht = alle.filter(function (b) { return !b.leer && (b.dept.mails || []).length; }), fehlt = alle.filter(function (b) { return !b.leer && !(b.dept.mails || []).length; });
@@ -1746,19 +1900,26 @@ var Core = (function () {
       if (stand) { stand.hidden = false; stand.textContent = 'Sende ' + b.dept.name + ' (' + (i + 1) + ' von ' + ids.length + ') …'; }
       var pdf = NUR_VORSCHAU ? 'VORSCHAU' : pdfBeleg(b).output('datauristring').split(',')[1];
       return tu(api('senden', { monat: m, d: b.dept.id, pdf: pdf, datei: dateiName(b), betreff: mailBetreff(b), text: mailText(b), summe: b.summe }))
-        .then(function () { ok++; i++; return weiter(); }, function () { render(); if (stand) { stand.className = 'msg err'; stand.textContent = b.dept.name + ' wurde nicht gesendet.' + (ok ? ' Davor gesendet: ' + ok + '.' : ''); } });
+        .then(function (r) { ok++; i++; if (r && r.hinweis) toast(r.hinweis, true); return weiter(); }, function () { render(); if (stand) { stand.className = 'msg err'; stand.textContent = b.dept.name + ' wurde nicht gesendet.' + (ok ? ' Davor gesendet: ' + ok + '.' : ''); } });
     }
     weiter();
   }
-  function pdfOeffnen(id) {
-    var b = bill(id, S.abr), doc = pdfBeleg(b), name = dateiName(b), blob = doc.output('blob');
+  /* PDF über das Teilen-Menü weitergeben (WhatsApp, Dateien, Drucken) oder herunterladen. Das Ergebnis: true = weitergegeben, false = abgebrochen */
+  function pdfTeilen(b, doc, name) {
+    doc = doc || pdfBeleg(b); name = name || (b ? dateiName(b) : 'Abrechnung.pdf');
+    var blob = doc.output('blob');
+    function laden() {
+      var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.target = '_blank'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000); return true;
+    }
     try {
       var file = new File([blob], name, { type: 'application/pdf' });
-      if (navigator.canShare && navigator.canShare({ files: [file] }) && (navigator.maxTouchPoints > 0 || 'ontouchstart' in window)) { navigator.share({ files: [file], title: name }).catch(function () {}); return; }
+      if (navigator.canShare && navigator.canShare({ files: [file] }) && (navigator.maxTouchPoints > 0 || 'ontouchstart' in window))
+        return navigator.share({ files: [file], title: name }).then(function () { return true; }, function (e) { return e && e.name === 'AbortError' ? false : laden(); });
     } catch (e) {}
-    var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; a.target = '_blank'; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+    return Promise.resolve(laden());
   }
+  function pdfOeffnen(id) { pdfTeilen(bill(id, S.abr)); }
 
   /* ---------- Abrechnung in A4: eine Zeichnung, zwei Ausgaben (PDF zum Verschicken, Bild zum Ansehen) ---------- */
   var PT = 0.352778, logoBild = new Image(); logoBild.src = LOGO;
@@ -1802,6 +1963,7 @@ var Core = (function () {
   function belegSeiten(b) { var g = gBild(7); zeichneBeleg(b, g); return g.liste; }
   function zeichneBeleg(b, g) {
     var L = 18, R = 192, B = R - L, y = 0, UNTEN = 270;
+    var E = b.erstellt || { am: heute(), von: S.me ? S.me.name : '', hinweis: S.cfg.set.hinweis || '', tage: S.cfg.set.tage !== false };
     var BLAU = [32, 49, 127], FG = [20, 26, 58], MUT = [85, 96, 138], LIN = [213, 218, 238], SOFT = [238, 241, 251], GRUEN = [31, 122, 73], WEISS = [255, 255, 255];
     function f(stil, gr, farbe) { g.font(stil, gr, farbe); }
     function t(text, x, yy, align) { g.text(text, x, yy, align); }
@@ -1829,7 +1991,7 @@ var Core = (function () {
       f('bold', 17, BLAU); t('Getränkeabrechnung', R, 26, 'right');
       linie(L, 39, R, 0.5, BLAU);
       g.flaeche(L, 45, B, 17, 2, SOFT);
-      var felder = [['Abteilung', b.dept.name], ['Zeitraum', monatText(b.monat)], ['Erstellt am', tagText(heute())], ['Erstellt von', S.me.name]], w = B / 4;
+      var felder = [b.frei ? ['Für', b.dept.name] : ['Abteilung', b.dept.name], b.frei ? ['Datum', tagText(b.tag)] : ['Zeitraum', monatText(b.monat)], ['Erstellt am', tagText(E.am)], ['Erstellt von', E.von]], w = B / 4;
       felder.forEach(function (x, i) {
         f('normal', 8.5, MUT); t(x[0], L + 4.5 + i * w, 51.5);
         f('bold', 11.5, FG); if (g.breite(x[1]) > w - 6) f('bold', 9.5, FG); t(passt(x[1], w - 6), L + 4.5 + i * w, 57.6);
@@ -1899,8 +2061,9 @@ var Core = (function () {
       g.flaeche(sx, y, 82, 10.5, 2, BLAU);
       f('bold', 14, WEISS); t('Zu zahlen', sx + 3, y + 7.2); t(eur(b.summe), R - 3, y + 7.2, 'right');
       y += 20;
+      if (b.frei && !b.mitRabatt && b.positionen.some(function (p) { return p.typ === 'kiste'; })) { f('normal', 8.5, MUT); t('Ohne Kistenrabatt berechnet.', R, y - 5.5, 'right'); }
 
-      if (S.cfg.set.tage !== false && b.rows.length) {
+      if (E.tage !== false && !b.frei && b.rows.length) {
         var na = b.arts.length || 1, wD = 24, wR = 19, wBt = 22, wV = 27, wA = (B - wD - wR - wBt - wV) / (2 * na), text = wA < 5.2;
         var tKopf = function () {
           f('bold', 8.5, BLAU);
@@ -1929,14 +2092,279 @@ var Core = (function () {
           f('normal', 9, MUT); t(passt(r.von.join(', '), wV - 2.5), R - wV + 1.5, y + 4.5);
           y += hh; linie(L, y, R, 0.2, LIN);
         });
+        if (b.rabatt > 0) { platz(8); f('normal', 8.5, MUT); t('Einzelne Flaschen werden über den ganzen Monat zusammengezählt. Der Kistenrabatt fällt an, sobald eine Kiste voll ist.', L, y + 5); }
       }
     }
-    var seiten = g.seiten(), hin = (S.cfg.set.hinweis || '').trim();
+    var seiten = g.seiten(), hin = String(E.hinweis || '').trim();
     for (var s = 1; s <= seiten; s++) {
       g.aufSeite(s); linie(L, 281, R, 0.2, LIN); f('normal', 8.5, MUT);
       if (hin) zeilenText(umbruch(hin, 140).slice(0, 2), L, 285.5, 3.6);
-      t(seiten > 1 ? 'Seite ' + s + ' von ' + seiten : monatText(b.monat), R, 285.5, 'right');
+      t(seiten > 1 ? 'Seite ' + s + ' von ' + seiten : (b.frei ? tagText(b.tag) : monatText(b.monat)), R, 285.5, 'right');
     }
+  }
+
+  /* ================= Freie Abrechnung: eigener Name, sofort senden oder exportieren ================= */
+  function frLeer() { return { id: neueId(), name: '', z: heute(), rab: true, q: {}, an: '' }; }
+  function fr() {
+    if (!S.fr) { var v = LS.get('frei'); S.fr = v && v.wo === wo() && v.fr && v.fr.id ? v.fr : frLeer(); if (!Core.istTag(S.fr.z)) S.fr.z = heute(); S.fr.q = S.fr.q || {}; S.fr.an = S.fr.an || ''; S.fr.name = S.fr.name || ''; }
+    return S.fr;
+  }
+  function frSichern() { var f = fr(); if (!f.name.trim() && !f.an.trim() && !frItems().length) LS.del('frei'); else LS.set('frei', { wo: wo(), fr: f }); }
+  function frItems() { return draftItems(fr().q).map(function (i) { return { a: i.a, k: i.k, f: i.f }; }); }
+  function frEntwurf() { var f = fr(); return (f.name.trim() || frItems().length) ? f : null; }
+  function frBeleg() {
+    var f = fr(), b = Core.freiBeleg(S.cfg, { name: f.name.trim() || 'Freie Abrechnung', z: f.z, rab: f.rab, it: frItems() });
+    b.erstellt = { am: heute(), von: S.me.name, hinweis: S.cfg.set.hinweis || '', tage: true }; delete b.items; return b;
+  }
+  function vFrei() {
+    var f = fr();
+    var h = '<section class="card frkopf"><label class="feld"><span>Für wen ist die Abrechnung?</span><input id="frName" class="frname" data-in="frName" value="' + esc(f.name) + '" maxlength="60" placeholder="z. B. Geburtstag Müller" autocomplete="off" enterkeyhint="done"></label>' +
+      '<div class="frzeile"><label class="feld"><span>Datum</span><input type="date" data-in="frDatum" value="' + esc(f.z) + '"></label>' +
+      '<label class="sw"><span class="t">Kistenrabatt anwenden<small>' + (f.rab ? 'Volle Kisten werden günstiger berechnet.' : 'Alles zum Einzelpreis, ohne Kistenrabatt.') + '</small></span><input type="checkbox" data-in="frRab"' + (f.rab ? ' checked' : '') + ' aria-label="Kistenrabatt anwenden"></label></div></section>';
+    h += '<div class="frage-z"><p class="frage">Was wurde getrunken?</p>' + (f.rab ? '<span class="chip klein">mit Kistenrabatt</span>' : '<span class="chip klein">ohne Kistenrabatt</span>') + '</div>';
+    h += '<div class="gks">' + aktArts().map(function (a, i) { return artKarte('f', a, i, f.q[a.id] || {}, true, f.rab); }).join('') + '</div>';
+    h += '<div class="bar gross" id="bar"><div class="txt"><small id="sumS"></small><b class="num" id="sumB">0,00 €</b></div><button class="btn" data-act="frWeiter" type="button">Weiter<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg></button></div>';
+    h += '<section class="card frende" id="frEnde"><div class="title">Abschließen</div>' +
+      '<label class="feld"><span>E-Mail-Adresse (nur zum Senden nötig)</span><input id="frMail" data-in="frMail" type="email" inputmode="email" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="name@beispiel.de" value="' + esc(f.an) + '"></label>' +
+      '<div class="reihe"><button class="btn hell" type="button" data-act="frAnsehen" data-fr>Ansehen</button><button class="btn hell" type="button" data-act="frExport" data-fr>Exportieren</button><button class="btn" type="button" data-act="frSenden" data-fr>Senden</button></div>' +
+      '<p class="hint">Nach dem Senden steht alles wieder auf Null. Beim Exportieren fragt dich die App danach, ob sie leeren soll.</p>' +
+      '<button class="btn rot klein" type="button" data-act="frLeeren">Alles zurücksetzen</button></section>';
+    return h;
+  }
+  function frUpd(live) {
+    if (S.screen !== 'frei' || !$('#sumB')) return;
+    var f = fr(), items = frItems(), b = frBeleg(), row = b.rows[0] || { arts: {} }, bar = $('#bar');
+    S.sumAkt = b.summe; zaehl($('#sumB'), b.summe, live);
+    $('#sumS').textContent = !items.length ? 'Tippe auf + oder auf die Zahl' : mengenText(draftItems(f.q)) + (b.rabatt > 0 ? ' · ' + eur(b.rabatt) + ' Rabatt' : '');
+    bar.classList.toggle('leer', !items.length);
+    if (live && !ruhig) { bar.classList.remove('wipp'); void bar.offsetWidth; bar.classList.add('wipp'); }
+    $$('[data-fr]').forEach(function (x) { x.disabled = !items.length; });
+    aktArts().forEach(function (a) {
+      var q = f.q[a.id] || {}, x = row.arts[a.id];
+      gkStand(view, a, q, x ? x.b : 0, live);
+      var el = $('[data-zus="' + CSS.escape(a.id) + '"]', view); if (!el) return;
+      if (!((q.k || q.f) && x && x.k > (q.k || 0))) { el.hidden = true; return; }
+      var pr = Core.cent(a.preis), jr = f.rab ? Core.kistenRabatt(pr, a.kiste, a.rt, a.rv) : 0, text = 'Das sind ' + mehrzahl(x.k, 'Kiste', 'Kisten') + (x.f ? ' + ' + mehrzahl(x.f, 'Flasche', 'Flaschen') : '') + (jr > 0 ? ' · Kistenrabatt ' + eur(jr * x.k) : '');
+      if (el.hidden || el.textContent !== text) { el.textContent = text; el.hidden = false; }
+    });
+    frSichern();
+  }
+  /* Prüft die Eingaben. Ergebnis: { b, mails } oder null (mit Hinweis) */
+  function frPruefen(mitMail) {
+    var f = fr(), name = f.name.trim(), roh = f.an.trim(), mails = Core.mailsVon(roh);
+    if (!name) { toast('Bitte oben eintragen, für wen die Abrechnung ist.', true); wackel($('.frkopf')); var i = $('#frName'); if (i) { i.scrollIntoView({ block: 'center' }); i.focus({ preventScroll: true }); } return null; }
+    if (!Core.istTag(f.z)) { toast('Bitte ein Datum wählen.', true); return null; }
+    if (!frItems().length) { toast('Bitte erst Getränke eintragen.', true); return null; }
+    if (mitMail) {
+      var falsch = roh.split(/[\s,;]+/).filter(function (x) { return x && mails.indexOf(x.toLowerCase()) < 0; });
+      if (!mails.length || falsch.length) { toast(falsch.length ? 'Keine gültige Adresse: ' + falsch[0] : 'Bitte unten eine E-Mail-Adresse eintragen.', true); wackel($('#frEnde')); var m = $('#frMail'); if (m) { m.scrollIntoView({ block: 'center' }); m.focus({ preventScroll: true }); } return null; }
+    }
+    return { b: frBeleg(), mails: mails };
+  }
+  /* Die Monatsabrechnung rechnet das Skript mit: es muss die neue Rabattregel (Flaschen über den Monat) kennen */
+  function regelAlt() {
+    if (conn && S.skript && S.skript < 10) { sheetSkriptAlt('Dein Google-Skript ist älter als die App und kennt die neue Regel für den Kistenrabatt noch nicht (Flaschen zählen über den Monat zusammen). Bitte zuerst aktualisieren, sonst stimmt das gespeicherte PDF im Archiv nicht mit dem gesendeten überein.'); return true; }
+    return false;
+  }
+  function frSkriptAlt() {
+    if (conn && S.skript && S.skript < 9) { sheetSkriptAlt('Dein Google-Skript ist älter als die App und kennt die freie Abrechnung und das Archiv noch nicht.'); return true; }
+    return false;
+  }
+  function frReq(b, wie, mails, pdf) {
+    var f = fr();
+    return { id: f.id, name: f.name.trim(), z: f.z, rab: f.rab, it: frItems(), an: mails.join(', '), wie: wie, pdf: pdf, datei: dateiName(b), betreff: mailBetreff(b), text: mailText(b), erstellt: { am: heute() }, summe: b.summe };
+  }
+  function pdfBase64(b) { return NUR_VORSCHAU ? 'VORSCHAU' : pdfBeleg(b).output('datauristring').split(',')[1]; }
+  function frNeu() { S.fr = frLeer(); LS.del('frei'); render(); }
+  function sheetFrSenden(p) {
+    var f = fr(), kopie = S.cfg.set.kopie || [];
+    var h = '<p class="hint">Die Mail geht mit der Abrechnung als PDF im Anhang raus. Sie wird danach im Archiv gespeichert, die PDF auch in Google Drive.</p>' +
+      '<div class="list"><div class="row"><div class="mid"><b>' + esc(f.name.trim()) + '</b><small>' + esc(p.mails.join(', ')) + ' · ' + esc(tagText(f.z)) + '</small></div><span class="amt num">' + eur(p.b.summe) + '</span></div></div>' +
+      (kopie.length ? '<p class="hint">Kopie an ' + esc(kopie.join(', ')) + '</p>' : '') +
+      (!conn ? '<div class="msg">Vorschau: Hier wird noch keine echte Mail verschickt.</div>' : '') +
+      '<button class="btn voll" type="button" data-act="frSendenJetzt" data-busy>Jetzt senden</button>';
+    sheet('Abrechnung senden', h);
+  }
+  function sheetFrFertig(req) {
+    S.frExp = req;
+    sheet('Abrechnung erledigt?', '<p class="hint">Hast du die Abrechnung für <b>' + esc(req.name) + '</b> (' + eur(req.summe) + ') verschickt?</p><p class="hint">Dann speichere ich sie im Archiv, lege die PDF in Google Drive ab und setze alles auf Null.</p>' +
+      '<div class="reihe"><button class="btn hell" type="button" data-act="frWeiterBearb">Nein, weiter bearbeiten</button><button class="btn" type="button" data-act="frExportJa" data-busy>Ja, speichern und leeren</button></div>');
+  }
+
+  /* ================= Statistik: Verbrauch je Abteilung im gewählten Zeitraum ================= */
+  var STAT_MAX = 24;
+  function monatsListe(v, b) { var out = [], m = v; while (m <= b && out.length < 40) { out.push(m); m = schiebeMonat(m, 1); } return out; }
+  function statStart() {
+    if (!S.st) { var h = heute().slice(0, 7); S.st = { von: h.slice(0, 4) + '-01', bis: h, lade: false, fehler: '' }; }
+  }
+  function statLaden() {
+    var st = S.st, fehlt = monatsListe(st.von, st.bis).filter(function (m) { return !S.frisch[m]; });
+    if (!fehlt.length || st.lade) return;
+    st.lade = true; st.fehler = '';
+    api('load', { monate: fehlt }).then(function () { st.lade = false; if (S.screen === 'stat') render(); }, function (e) { st.lade = false; st.fehler = e.message; if (S.screen === 'stat') render(); });
+  }
+  /* Rechnet jeden Monat genau wie die Monatsabrechnung und zählt zusammen */
+  function statBerechnen(von, bis) {
+    var ms = monatsListe(von, bis), byId = {}, ids = [], art = {}, mon = {}, tot = { summe: 0, zw: 0, rab: 0, fl: 0, st: 0 };
+    ms.forEach(function (m) {
+      var list = S.ent[m] || [], seen = {}, order = [];
+      S.cfg.depts.forEach(function (d) { seen[d.id] = d.name; order.push(d.id); });
+      list.forEach(function (e) { if (!seen[e.d]) { seen[e.d] = e.dn || e.d; order.push(e.d); } });
+      order.forEach(function (did) {
+        var b = Core.rechne(S.cfg, list, did, m); if (b.leer) return;
+        var D = byId[did]; if (!D) { D = byId[did] = { id: did, name: seen[did], summe: 0, zw: 0, rab: 0, fl: 0, st: 0, arts: {} }; ids.push(did); }
+        D.summe += b.summe; D.zw += b.zwischen; D.rab += b.rabatt; D.fl += b.flaschen; D.st += b.stueck;
+        tot.summe += b.summe; tot.zw += b.zwischen; tot.rab += b.rabatt; tot.fl += b.flaschen; tot.st += b.stueck; mon[m] = (mon[m] || 0) + b.summe;
+        b.arts.forEach(function (ai) {
+          var x = b.monatArt[ai.a]; if (!x) return;
+          [D.arts, art].forEach(function (z) { var A = z[ai.a] || (z[ai.a] = { a: ai.a, name: ai.name, st: ai.st, eh: ai.eh, n: 0, b: 0 }); A.n += x.n; A.b += x.b; A.name = ai.name; });
+        });
+      });
+    });
+    var reihe = function (o) { var out = []; S.cfg.arts.forEach(function (a) { if (o[a.id]) out.push(o[a.id]); }); Object.keys(o).forEach(function (k) { if (out.indexOf(o[k]) < 0) out.push(o[k]); }); return out; };
+    var depts = ids.map(function (i) { var D = byId[i]; D.liste = reihe(D.arts); return D; }).sort(function (a, b) { return b.summe - a.summe || a.name.localeCompare(b.name, 'de'); });
+    return { von: von, bis: bis, monate: ms, depts: depts, arts: reihe(art), mon: mon, tot: tot, erstellt: { am: heute(), von: S.me.name } };
+  }
+  function statZeitraum(v, b) { return v === b ? monatText(v) : monatText(v) + ' bis ' + monatText(b); }
+  function statMenge(x) { return x.st ? x.n + ' ' + (x.eh && x.eh !== 'Stück' ? x.eh : 'Stück') : mehrzahl(x.n, 'Flasche', 'Flaschen'); }
+  function statSumme(o) { var t = []; if (o.fl) t.push(mehrzahl(o.fl, 'Flasche', 'Flaschen')); if (o.st) t.push(o.st + ' Stück'); return t.join(' · ') || 'nichts'; }
+  function vStat() {
+    statStart(); var st = S.st, h = '', hm = heute().slice(0, 7), opt = [];
+    for (var i = 0; i < 48; i++) opt.push(schiebeMonat(hm, -i));
+    var sel = function (id, wert) { return '<select data-in="' + id + '">' + opt.map(function (m) { return '<option value="' + m + '"' + (m === wert ? ' selected' : '') + '>' + esc(monatText(m)) + '</option>'; }).join('') + '</select>'; };
+    var jahr = hm.slice(0, 4);
+    h += '<section class="glass statkopf"><div class="chips">' +
+      [['monat', 'Dieser Monat'], ['drei', 'Letzte 3 Monate'], ['jahr', 'Dieses Jahr'], ['vorjahr', 'Letztes Jahr'], ['zwoelf', 'Letzte 12 Monate']].map(function (c) { return '<button type="button" class="chipbtn" data-act="statChip" data-w="' + c[0] + '">' + c[1] + '</button>'; }).join('') + '</div>' +
+      '<div class="zweispalt"><label class="feld"><span>Von</span>' + sel('statVon', st.von) + '</label><label class="feld"><span>Bis</span>' + sel('statBis', st.bis) + '</label></div>' +
+      '<p class="hint">Es zählen ganze Monate, bis zu ' + STAT_MAX + '. Die Beträge sind genau die der Monatsabrechnungen, mit Kistenrabatt.</p></section>';
+    statLaden();
+    if (st.lade) return h + '<p class="note">Lade …</p>';
+    if (st.fehler) return h + '<section class="card"><p class="hint">' + esc(st.fehler) + '</p><button class="btn hell" data-act="statNochmal">Noch einmal versuchen</button></section>';
+    if (monatsListe(st.von, st.bis).some(function (m) { return !S.ent[m]; })) return h + '<p class="note">Lade …</p>';
+    var r = statBerechnen(st.von, st.bis); S.statErg = r;
+    if (!r.depts.length) return h + '<section class="card"><p class="empty">Im Zeitraum ' + esc(statZeitraum(st.von, st.bis)) + ' wurde nichts eingetragen.</p></section>';
+    h += '<div class="total"><span>Gesamt · ' + esc(statZeitraum(st.von, st.bis)) + '</span><b class="num">' + eur(r.tot.summe) + '</b></div>' +
+      '<p class="hint mitte statsum">' + esc(statSumme(r.tot)) + (r.tot.rab ? ' · davon ' + eur(r.tot.rab) + ' Kistenrabatt' : '') + '</p>' +
+      '<div class="reihe statknoepfe"><button class="btn hell" type="button" data-act="statAnsehen">Ansehen</button>' + (NUR_VORSCHAU ? '' : '<button class="btn" type="button" data-act="statPdf">PDF erstellen</button>') + '</div>';
+    h += '<section class="card"><div class="head"><div class="title">Je Abteilung</div></div><div class="stats">' + r.depts.map(function (D) {
+      var pct = r.tot.summe ? D.summe / r.tot.summe : 0;
+      return '<div class="stat-z"><div class="oben"><b>' + esc(D.name) + '</b><span class="amt num">' + eur(D.summe) + '</span></div><div class="balken" aria-hidden="true"><i style="width:' + Math.max(2, Math.round(pct * 100)) + '%"></i></div><div class="sub">' + esc(statSumme(D)) + ' · ' + zahlDe(pct * 100, 0) + ' %' + '</div>' +
+        '<details><summary>Nach Getränk</summary><div class="list">' + D.liste.map(function (x) { return '<div class="row"><div class="mid"><b>' + esc(x.name) + '</b><small>' + esc(statMenge(x)) + '</small></div><span class="amt num">' + eur(x.b) + '</span></div>'; }).join('') + '</div></details></div>';
+    }).join('') + '</div></section>';
+    h += '<section class="card"><div class="head"><div class="title">Je Getränk</div></div><div class="list">' + r.arts.map(function (x) { return '<div class="row"><div class="mid"><b>' + esc(x.name) + '</b><small>' + esc(statMenge(x)) + '</small></div><span class="amt num">' + eur(x.b) + '</span></div>'; }).join('') + '</div></section>';
+    if (r.monate.length > 1) h += '<section class="card"><div class="head"><div class="title">Je Monat</div></div><div class="list">' + r.monate.map(function (m) { return '<div class="row"><div class="mid"><b>' + esc(monatText(m)) + '</b></div><span class="amt num">' + eur(r.mon[m] || 0) + '</span></div>'; }).join('') + '</div></section>';
+    return h;
+  }
+  function statErgebnis() { var st = S.st; if (!st || monatsListe(st.von, st.bis).some(function (m) { return !S.ent[m]; })) return null; var r = statBerechnen(st.von, st.bis); return r.depts.length ? r : null; }
+  function statPdfName(r) { return 'Getraenkestatistik_' + r.von + (r.von === r.bis ? '' : '_bis_' + r.bis) + '.pdf'; }
+  function statSeiten(r) { var g = gBild(7); zeichneStat(r, g); return g.liste; }
+  function statPdfDoc(r) { var g = gPdf(); zeichneStat(r, g); g.doc.setProperties({ title: 'Getränkestatistik ' + statZeitraum(r.von, r.bis), author: VEREIN }); return g.doc; }
+  function zeichneStat(r, g) {
+    var L = 18, R = 192, B = R - L, y = 0, UNTEN = 270;
+    var BLAU = [32, 49, 127], FG = [20, 26, 58], MUT = [85, 96, 138], LIN = [213, 218, 238], SOFT = [238, 241, 251], GRUEN = [31, 122, 73];
+    function f(stil, gr, farbe) { g.font(stil, gr, farbe); }
+    function t(text, x, yy, align) { g.text(text, x, yy, align); }
+    function linie(x1, yy, x2, dick, farbe) { g.strich(x1, yy, x2, yy, dick, farbe); }
+    function passt(text, breite) { text = String(text); if (g.breite(text) <= breite) return text; while (text.length > 1 && g.breite(text + '…') > breite) text = text.slice(0, -1); return text + '…'; }
+    function kopf() {
+      g.flaeche(0, 0, 210, 5, 0, BLAU); g.bild(L, 13, 18.65, 22);
+      f('bold', 12, BLAU); t(VEREIN, L + 24, 23); f('normal', 10, MUT); t('Interne Getränkestatistik', L + 24, 28.5);
+      f('bold', 17, BLAU); t('Getränkestatistik', R, 26, 'right'); linie(L, 39, R, 0.5, BLAU);
+      g.flaeche(L, 45, B, 17, 2, SOFT);
+      var felder = [['Zeitraum', statZeitraum(r.von, r.bis).replace(' bis ', ' – ')], ['Abteilungen', String(r.depts.length)], ['Erstellt am', tagText(r.erstellt.am)], ['Erstellt von', r.erstellt.von]], w = [64, 30, 38, B - 132];
+      var x0 = L + 4.5;
+      felder.forEach(function (x, i) { f('normal', 8.5, MUT); t(x[0], x0, 51.5); f('bold', 11, FG); t(passt(x[1], w[i] - 5), x0, 57.6); x0 += w[i]; });
+      y = 72;
+    }
+    function platz(h, wieder) { if (y + h <= UNTEN) return; g.neueSeite(); kopf(); if (wieder) wieder(); }
+    function h2(text, hinweis) { platz(24); f('bold', 11.5, BLAU); t(text, L, y); y += 4; if (hinweis) { f('normal', 8.5, MUT); t(hinweis, L, y + 1); y += 4.5; } }
+    var x1 = 128, x2 = 150, x3 = 170;   // rechte Kanten der Spalten
+    kopf();
+    h2('Verbrauch je Abteilung', 'Beträge wie auf den Monatsabrechnungen, mit Kistenrabatt.');
+    var kopfZ = function () { f('bold', 8.5, MUT); t('Abteilung', L + 1.5, y + 5); t('Flaschen', x1, y + 5, 'right'); t('Stück', x2, y + 5, 'right'); t('Anteil', x3, y + 5, 'right'); t('Betrag', R - 1.5, y + 5, 'right'); y += 7.5; linie(L, y, R, 0.4, BLAU); };
+    kopfZ();
+    r.depts.forEach(function (D) {
+      platz(8, kopfZ); f('normal', 10.5, FG); t(passt(D.name, 88), L + 1.5, y + 5.4); t(String(D.fl || '–'), x1, y + 5.4, 'right'); t(String(D.st || '–'), x2, y + 5.4, 'right');
+      f('normal', 10, MUT); t(zahlDe(r.tot.summe ? D.summe / r.tot.summe * 100 : 0, 0) + ' %', x3, y + 5.4, 'right'); f('bold', 10.5, FG); t(eur(D.summe), R - 1.5, y + 5.4, 'right');
+      y += 8; linie(L, y, R, 0.2, LIN);
+    });
+    platz(12, kopfZ); linie(L, y, R, 0.4, BLAU); f('bold', 11, FG); t('Gesamt', L + 1.5, y + 6.2); t(String(r.tot.fl || '–'), x1, y + 6.2, 'right'); t(String(r.tot.st || '–'), x2, y + 6.2, 'right'); t(eur(r.tot.summe), R - 1.5, y + 6.2, 'right'); y += 9;
+    if (r.tot.rab > 0) { f('normal', 9.5, GRUEN); t('Darin Kistenrabatt: ' + eur(r.tot.rab), R - 1.5, y + 3.5, 'right'); y += 6; }
+    y += 8;
+    h2('Verbrauch je Getränk');
+    var kopfA = function () { f('bold', 8.5, MUT); t('Getränk', L + 1.5, y + 5); t('Menge', x2 + 10, y + 5, 'right'); t('Betrag', R - 1.5, y + 5, 'right'); y += 7.5; linie(L, y, R, 0.4, BLAU); };
+    kopfA();
+    r.arts.forEach(function (x) { platz(8, kopfA); f('normal', 10.5, FG); t(passt(x.name, 100), L + 1.5, y + 5.4); t(statMenge(x), x2 + 10, y + 5.4, 'right'); f('bold', 10.5, FG); t(eur(x.b), R - 1.5, y + 5.4, 'right'); y += 8; linie(L, y, R, 0.2, LIN); });
+    y += 8;
+    if (r.monate.length > 1) {
+      h2('Verbrauch je Monat');
+      var kopfM = function () { f('bold', 8.5, MUT); t('Monat', L + 1.5, y + 5); t('Betrag', R - 1.5, y + 5, 'right'); y += 7.5; linie(L, y, R, 0.4, BLAU); };
+      kopfM();
+      r.monate.forEach(function (m) { platz(8, kopfM); f('normal', 10.5, FG); t(monatText(m), L + 1.5, y + 5.4); f('bold', 10.5, FG); t(eur(r.mon[m] || 0), R - 1.5, y + 5.4, 'right'); y += 8; linie(L, y, R, 0.2, LIN); });
+      y += 8;
+    }
+    h2('Details je Abteilung');
+    r.depts.forEach(function (D) {
+      platz(8 + Math.min(2, D.liste.length) * 7);
+      g.flaeche(L, y, B, 8, 1.5, SOFT); f('bold', 10.5, BLAU); t(passt(D.name, 110), L + 3, y + 5.5); t(eur(D.summe), R - 3, y + 5.5, 'right'); y += 10;
+      D.liste.forEach(function (x) { platz(7); f('normal', 10, FG); t(passt(x.name, 100), L + 5, y + 4.5); f('normal', 10, MUT); t(statMenge(x), x2 + 10, y + 4.5, 'right'); f('normal', 10, FG); t(eur(x.b), R - 3, y + 4.5, 'right'); y += 6.6; linie(L + 4, y, R - 2, 0.15, LIN); });
+      y += 4;
+    });
+    var seiten = g.seiten();
+    for (var sn = 1; sn <= seiten; sn++) { g.aufSeite(sn); linie(L, 281, R, 0.2, LIN); f('normal', 8.5, MUT); t(seiten > 1 ? 'Seite ' + sn + ' von ' + seiten : statZeitraum(r.von, r.bis), R, 285.5, 'right'); }
+  }
+
+  /* ================= Versendete Abrechnungen (Archiv) ================= */
+  function archivLaden() {
+    var a = S.arch; if (a.laden) return; a.laden = true; a.fehler = '';
+    api('archiv').then(function (r) { a.laden = false; a.liste = r.archiv || []; a.alt = r.alt || []; if (S.screen === 'archiv') render(); },
+      function (e) { a.laden = false; a.fehler = e.message; if (e.code === 'auth' || e.code === 'fremd') { S.sperre = e.message; S.sperreArt = e.code; } if (S.screen === 'archiv' || S.sperre) render(); });
+  }
+  function archZeit(r) { return r.art === 'frei' ? tagText(r.zeit) : monatText(r.zeit); }
+  function archMonate() {
+    var m = {}; (S.arch.liste || []).forEach(function (r) { m[String(r.zeit).slice(0, 7)] = 1; }); (S.arch.alt || []).forEach(function (r) { m[String(r.at).slice(0, 7)] = 1; });
+    return Object.keys(m).sort().reverse();
+  }
+  function archListe() {
+    var a = S.arch, q = a.suche.trim().toLowerCase(), mon = a.monat;
+    var liste = (a.liste || []).filter(function (r) { return (!mon || String(r.zeit).slice(0, 7) === mon) && (!q || (r.name + ' ' + (r.an || []).join(' ') + ' ' + (r.betreff || '') + ' ' + r.by).toLowerCase().indexOf(q) >= 0); });
+    var alt = (a.alt || []).filter(function (r) { return (!mon || String(r.at).slice(0, 7) === mon) && (!q || (r.betreff + ' ' + r.an).toLowerCase().indexOf(q) >= 0); });
+    var h = '';
+    if (!(a.liste || []).length && !(a.alt || []).length) return '<section class="card"><p class="empty">Noch nichts verschickt. Alles, was du per Mail sendest oder als erledigt exportierst, erscheint hier mit seiner PDF.</p></section>';
+    if (!liste.length && !alt.length) return '<section class="card"><p class="empty">Dazu gibt es nichts. Probier eine andere Suche oder einen anderen Monat.</p></section>';
+    if (liste.length) h += '<section class="card"><div class="head"><div class="title">' + mehrzahl(liste.length, 'Abrechnung', 'Abrechnungen') + '</div></div><div class="list">' + liste.map(function (r) {
+      return '<button class="row" type="button" data-act="archivAuf" data-id="' + esc(r.id) + '"><div class="mid"><b>' + esc(r.name) + '</b><small>' + esc(archZeit(r)) + ' · ' + (r.art === 'frei' ? 'freie Abrechnung' : 'Abteilung') + ' · ' + (r.wie === 'export' ? 'exportiert' : 'gesendet') + ' am ' + esc(zeitText(r.at)) + ' · ' + esc(r.by) + '</small>' +
+        ((r.an || []).length ? '<small>an ' + esc(r.an.join(', ')) + '</small>' : '') + ((r.nach || []).length ? '<small>' + esc('Erneut gesendet: ' + r.nach.length + ' ×') + '</small>' : '') + '</div><span class="amt num">' + eur(r.summe) + '</span></button>';
+    }).join('') + '</div></section>';
+    if (alt.length) h += '<section class="card"><div class="head"><div class="title">Früher verschickt</div></div><p class="hint">Vor dem Archiv verschickt, deshalb nur als Eintrag und ohne PDF.</p><div class="list">' + alt.map(function (r) {
+      return '<div class="row"><div class="mid"><b>' + esc(r.betreff || r.datei) + '</b><small>' + esc(zeitText(r.at)) + ' · an ' + esc(r.an) + '</small></div></div>';
+    }).join('') + '</div></section>';
+    return h;
+  }
+  function vArchiv() {
+    var a = S.arch;
+    if (!a.liste) {
+      if (!a.fehler) { archivLaden(); return '<p class="note">Lade …</p>'; }
+      return '<section class="card"><p class="hint">' + esc(a.fehler) + '</p><button class="btn hell" data-act="archivNochmal">Noch einmal versuchen</button></section>';
+    }
+    var opt = '<option value="">Alle Monate</option>' + archMonate().map(function (m) { return '<option value="' + m + '"' + (a.monat === m ? ' selected' : '') + '>' + esc(monatText(m)) + '</option>'; }).join('');
+    return '<section class="glass archkopf"><label class="feld"><span>Suchen</span><input id="aSuche" data-in="aSuche" type="search" value="' + esc(a.suche) + '" placeholder="Name, E-Mail, Betreff" autocomplete="off" autocapitalize="off"></label>' +
+      '<label class="feld"><span>Monat</span><select data-in="aMonat">' + opt + '</select></label></section><div id="aListe">' + archListe() + '</div>';
+  }
+  function sheetArchivDetail(r) {
+    var b = r.beleg, S2 = S.arch; S2.cur = r;
+    var hint = esc(archZeit(r)) + ' · ' + (r.art === 'frei' ? 'freie Abrechnung' : 'Abteilung') + ' · <b>' + eur(r.summe) + '</b><br>' + (r.wie === 'export' ? 'Exportiert' : 'Gesendet') + ' am ' + esc(zeitText(r.at)) + ' von ' + esc(r.by) + ((r.an || []).length ? '<br>An ' + esc(r.an.join(', ')) : '') +
+      (r.nach || []).map(function (n) { return '<br>Erneut gesendet am ' + esc(zeitText(n.at)) + ' an ' + esc((n.an || []).join(', ')); }).join('');
+    var knoepfe = (b && !NUR_VORSCHAU ? '<button class="btn hell" type="button" data-act="archivPdf">PDF teilen</button>' : '') + (r.url ? '<a class="btn hell" href="' + esc(r.url) + '" target="_blank" rel="noopener">In Google Drive öffnen</a>' : '') + '<button class="btn" type="button" data-act="archivNochmalSenden">Erneut senden</button>';
+    if (b) sheetBeleg(r.name, hint, b, knoepfe);
+    else sheet(esc(r.name), '<p class="hint">' + hint + '</p><div class="msg">Die Vorschau ist nicht gespeichert.' + (r.url ? ' Die PDF liegt in Google Drive.' : '') + '</div><div class="reihe">' + knoepfe + '</div>', 'hoch');
+  }
+  function sheetArchivSenden() {
+    var r = S.arch.cur; if (!r) return;
+    sheet('Erneut senden', '<p class="hint">' + esc(r.name) + ' · ' + esc(archZeit(r)) + ' · ' + eur(r.summe) + '. Die PDF wird so verschickt, wie sie damals erstellt wurde.</p>' +
+      '<label class="feld"><span>E-Mail-Adresse</span><input id="aMail" type="email" inputmode="email" autocapitalize="off" autocomplete="off" spellcheck="false" value="' + esc((r.an || [])[0] || '') + '" placeholder="name@beispiel.de"></label>' +
+      (!conn ? '<div class="msg">Vorschau: Hier wird noch keine echte Mail verschickt.</div>' : '') +
+      '<div class="msg err" id="aErr" hidden></div><button class="btn voll" type="button" data-act="archivSendenJetzt" data-busy>Jetzt senden</button>');
   }
 
   /* ================= Verwalten ================= */
@@ -2124,13 +2552,13 @@ var Core = (function () {
 
   /* ---------- Bedienung ---------- */
   function mengeSetzen(step, wert) {
-    var ctx = step.getAttribute('data-ctx'), art = step.getAttribute('data-art'), fld = step.getAttribute('data-fld'), q = ctx === 'd' ? S.draft : S.pq;
+    var ctx = step.getAttribute('data-ctx'), art = step.getAttribute('data-art'), fld = step.getAttribute('data-fld'), q = ctx === 'd' ? S.draft : ctx === 'f' ? fr().q : S.pq;
     wert = Math.max(0, Math.min(9999, Math.round(Number(wert) || 0)));
     if (!q[art]) q[art] = {};
     q[art][fld] = wert;
     step.classList.toggle('an', wert > 0);
     var inp = $('input', step); if (inp && !ruhig) { inp.classList.remove('hops'); void inp.offsetWidth; inp.classList.add('hops'); }
-    if (ctx === 'd') sumUpd(true); else pSumUpd(true);
+    if (ctx === 'd') sumUpd(true); else if (ctx === 'f') frUpd(true); else pSumUpd(true);
     return wert;
   }
   function schritt(b, n) { var st = b.parentNode, inp = $('input', st); inp.value = mengeSetzen(st, (Number(inp.value) || 0) + n); }
@@ -2147,7 +2575,74 @@ var Core = (function () {
   var A = {
     oeffne: function (b) { S.dept = b.getAttribute('data-id'); S.draft = {}; S.tag = heute(); geh('dept'); },
     zurueck: function () { zurueck(); },
-    menu: function (b) { geh(b.getAttribute('data-s')); },
+    menu: function (b) {
+      var sc = b.getAttribute('data-s');
+      if (sc === 'archiv') { if (conn && S.skript && S.skript < 9) { sheetSkriptAlt('Dein Google-Skript ist älter als die App und kennt das Archiv noch nicht.'); return; } S.arch.liste = null; S.arch.fehler = ''; }
+      if (sc === 'stat') statStart();
+      geh(sc);
+    },
+    freiAuf: function () { fr(); geh('frei'); if (!fr().name) setTimeout(function () { var i = $('#frName'); if (i && S.screen === 'frei') i.focus({ preventScroll: true }); }, 480); },
+    frWeiter: function () { var e = $('#frEnde'); if (e) e.scrollIntoView({ behavior: ruhig ? 'auto' : 'smooth', block: 'start' }); },
+    frAnsehen: function () {
+      var p = frPruefen(false); if (!p) return;
+      sheetBeleg(p.b.dept.name, esc(tagText(p.b.tag)) + ' · <b>' + eur(p.b.summe) + '</b> · so wird die PDF aussehen', p.b, '<button class="btn hell" type="button" data-act="zu">Zurück</button>');
+    },
+    frExport: function () {
+      var p = frPruefen(false); if (!p || frSkriptAlt()) return;
+      var req = frReq(p.b, 'export', p.mails, pdfBase64(p.b));
+      if (NUR_VORSCHAU) { toast('In der Vorschau gibt es keine PDF-Datei.'); sheetFrFertig(req); return; }
+      pdfTeilen(p.b).then(function () { sheetFrFertig(req); });
+    },
+    frWeiterBearb: function () { S.frExp = null; schliesse(); },
+    frExportJa: function () {
+      var req = S.frExp; if (!req) { schliesse(); return; }
+      tu(api('frei', req)).then(function (r) { S.frExp = null; schliesse(); frNeu(); feier('Gespeichert', 'im Archiv · ' + req.name); if (r.hinweis) toast(r.hinweis, true); }, function () {});
+    },
+    frSenden: function () {
+      var p = frPruefen(true); if (!p || frSkriptAlt()) return;
+      sheetFrSenden(p);
+    },
+    frSendenJetzt: function () {
+      var p = frPruefen(true); if (!p) { schliesse(); return; }
+      var req = frReq(p.b, 'mail', p.mails, pdfBase64(p.b));
+      tu(api('frei', req)).then(function (r) { schliesse(); frNeu(); feier('Gesendet', req.name, 'mail'); if (r.hinweis) toast(r.hinweis, true); }, function () {});
+    },
+    frLeeren: function (b) {
+      if (!frEntwurf() && !fr().an) return;
+      if (!b.classList.contains('scharf')) { b.classList.add('scharf'); b.textContent = 'Wirklich alles löschen?'; setTimeout(function () { if (b.isConnected) { b.classList.remove('scharf'); b.textContent = 'Alles zurücksetzen'; } }, 3500); return; }
+      frNeu(); toast('Zurückgesetzt');
+    },
+    statChip: function (b) {
+      var w = b.getAttribute('data-w'), hm = heute().slice(0, 7), j = hm.slice(0, 4), st = S.st;
+      if (w === 'monat') { st.von = hm; st.bis = hm; } else if (w === 'drei') { st.von = schiebeMonat(hm, -2); st.bis = hm; } else if (w === 'jahr') { st.von = j + '-01'; st.bis = hm; }
+      else if (w === 'vorjahr') { st.von = (j - 1) + '-01'; st.bis = (j - 1) + '-12'; } else { st.von = schiebeMonat(hm, -11); st.bis = hm; }
+      render();
+    },
+    statNochmal: function () { S.st.fehler = ''; render(); },
+    statAnsehen: function () {
+      var r = statErgebnis(); if (!r) return;
+      sheetBeleg('Statistik', esc(statZeitraum(r.von, r.bis)) + ' · <b>' + eur(r.tot.summe) + '</b>', { _stat: r }, (NUR_VORSCHAU ? '' : '<button class="btn hell" type="button" data-act="statPdf">PDF erstellen</button>') + '<button class="btn" type="button" data-act="zu">Schließen</button>');
+    },
+    statPdf: function () { var r = statErgebnis(); if (r) pdfTeilen(null, statPdfDoc(r), statPdfName(r)); },
+    archivNochmal: function () { S.arch.fehler = ''; S.arch.liste = null; render(); },
+    archivAuf: function (b) {
+      var id = b.getAttribute('data-id'), kopf = Core.finde(S.arch.liste || [], id);
+      sheet(esc(kopf ? kopf.name : 'Abrechnung'), '<p class="note">Lade …</p>', 'hoch');
+      api('archivEins', { id: id }).then(function (r) { if ($('#sheet')) sheetArchivDetail(r.eins); }, function (e) { schliesse(); toast(e.message, true); });
+    },
+    archivPdf: function () { var r = S.arch.cur; if (r && r.beleg) pdfTeilen(r.beleg, null, r.datei); },
+    archivNochmalSenden: function () { sheetArchivSenden(); },
+    archivSendenJetzt: function () {
+      var r = S.arch.cur, roh = $('#aMail').value.trim(), mails = Core.mailsVon(roh), err = $('#aErr');
+      var falsch = roh.split(/[\s,;]+/).filter(function (x) { return x && mails.indexOf(x.toLowerCase()) < 0; });
+      if (!mails.length || falsch.length) { err.hidden = false; err.textContent = falsch.length ? 'Keine gültige Adresse: ' + falsch[0] : 'Bitte eine E-Mail-Adresse eintragen.'; wackel($('.sheet-card')); return; }
+      var req = { id: r.id, an: mails.join(', '), text: r.beleg ? mailText(r.beleg) : 'Im Anhang die Getränkeabrechnung.' };
+      if (!r.fid) { if (!r.beleg) { err.hidden = false; err.textContent = 'Zu dieser Abrechnung gibt es keine PDF mehr.'; return; } req.pdf = pdfBase64(r.beleg); }
+      tu(api('nachsenden', req)).then(function (x) {
+        S.arch.liste = (S.arch.liste || []).map(function (y) { return y.id === x.archiv.id ? x.archiv : y; });
+        schliesse(); render(); feier('Gesendet', mails[0], 'mail');
+      }, function () {});
+    },
     zahnrad: function () {
       var r = rechte();
       if (!(r.abr || r.verw || r.admin)) { sheetKonto(); return; }
@@ -2224,8 +2719,8 @@ var Core = (function () {
       else { box.scrollLeft = 0; box.scrollTop = Math.max(0, c.offsetTop - 12); }
     },
     pdf: function (b) { pdfOeffnen(b.getAttribute('data-id')); },
-    senden: function (b) { sheetSenden([b.getAttribute('data-id')]); },
-    alleSenden: function () { sheetSenden(abrDepts(S.abr).map(function (x) { return x.d.id; })); },
+    senden: function (b) { if (regelAlt()) return; sheetSenden([b.getAttribute('data-id')]); },
+    alleSenden: function () { if (regelAlt()) return; sheetSenden(abrDepts(S.abr).map(function (x) { return x.d.id; })); },
     sendenJetzt: function (b) { sendenJetzt(b.getAttribute('data-ids').split(',')); },
 
     seg: function (b) {
@@ -2324,11 +2819,22 @@ var Core = (function () {
     if (was === 'menge') mengeSetzen(t.parentNode, t.value);
     else if (was === 'artRechnen') artRechnen();
     else if (was === 'persAdmin') persUi();
+    else if (was === 'frName') { fr().name = t.value; frSichern(); }
+    else if (was === 'frMail') { fr().an = t.value; frSichern(); }
+    else if (was === 'aSuche') { S.arch.suche = t.value; var l = $('#aListe'); if (l) l.innerHTML = archListe(); }
   });
   document.addEventListener('change', function (ev) {
     var t = ev.target, was = t.getAttribute && t.getAttribute('data-in');
     if (was === 'datum' && Core.istTag(t.value)) { S.tag = t.value; render(); }
     else if (was === 'menge') t.value = mengeSetzen(t.parentNode, t.value);
+    else if (was === 'frDatum') { if (Core.istTag(t.value)) { fr().z = t.value; frSichern(); } else t.value = fr().z; }
+    else if (was === 'frRab') { fr().rab = t.checked; frSichern(); render(); }
+    else if (was === 'statVon' || was === 'statBis') {
+      var st = S.st; if (was === 'statVon') { st.von = t.value; if (st.bis < st.von) st.bis = st.von; } else { st.bis = t.value; if (st.von > st.bis) st.von = st.bis; }
+      if (monatsListe(st.von, st.bis).length > STAT_MAX) { if (was === 'statVon') st.bis = schiebeMonat(st.von, STAT_MAX - 1); else st.von = schiebeMonat(st.bis, -(STAT_MAX - 1)); toast('Höchstens ' + STAT_MAX + ' Monate auf einmal.'); }
+      render();
+    }
+    else if (was === 'aMonat') { S.arch.monat = t.value; var l = $('#aListe'); if (l) l.innerHTML = archListe(); }
   });
   document.addEventListener('focusin', function (ev) { var t = ev.target; if (t.getAttribute && t.getAttribute('data-in') === 'menge') setTimeout(function () { try { t.select(); } catch (e) {} }, 0); });
   document.addEventListener('keydown', function (ev) {
@@ -2339,9 +2845,11 @@ var Core = (function () {
     else if (id === 'pwA') { ev.preventDefault(); $('#pwB').focus(); }
     else if (id === 'pwB') { ev.preventDefault(); var b = $('[data-act="pwNeuOk"]') || $('[data-act="pwAendern"]'); if (b && !b.disabled) b.click(); }
     else if (id === 'neuName') { ev.preventDefault(); A.leutePlusJetzt(); }
+    else if (id === 'frName') { ev.preventDefault(); ev.target.blur(); }
+    else if (id === 'aMail') { ev.preventDefault(); A.archivSendenJetzt(); }
   });
 
-  window.__abr = { S: S, pdfBeleg: pdfBeleg, belegSeiten: belegSeiten, bill: bill, liesLink: liesLink, render: render };
+  window.__abr = { S: S, fr: fr, pdfBeleg: pdfBeleg, belegSeiten: belegSeiten, bill: bill, liesLink: liesLink, render: render };
   start();
 })();
 
