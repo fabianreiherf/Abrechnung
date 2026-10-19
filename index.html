@@ -453,6 +453,25 @@ a.btn { text-decoration: none; }
 @keyframes hops { from { transform: scale(1.12); } }
 .step.gr button { transition: transform .1s ease-out, opacity .2s; }
 
+/* ===== Ruhige Bewegung (iPad): nichts verschiebt oder skaliert sich mehr, es wird nur ein- und ausgeblendet ===== */
+#view.vor > *, #view.rueck > *, #view.auf > *, #view.vor .gk, #view.rueck .gk, #view.auf .gk, #view.vor .kachel, #view.rueck .kachel, #view.auf .kachel { will-change: auto; }
+@keyframes vonRechts { from { opacity: 0; } }
+@keyframes vonLinks { from { opacity: 0; } }
+@keyframes rein { from { opacity: 0; } }
+@keyframes plopp { from { opacity: 0; } }
+@keyframes hops { from { color: var(--accent-2); } }
+@keyframes wipp { 40% { box-shadow: 0 10px 30px var(--shadow), 0 0 0 3px var(--accent-2); } }
+@keyframes neuZeile { from { opacity: 0; background-color: var(--ok-soft); } 55% { opacity: 1; background-color: var(--ok-soft); } to { background-color: transparent; } }
+@keyframes puls { 0% { opacity: .6; } 45% { opacity: 1; border-color: var(--ok); } 100% { opacity: 1; } }
+@keyframes hueppf { 40% { opacity: .55; } }
+@keyframes bereit { from { opacity: .9; } to { opacity: 0; } }
+.sheet-card { animation-name: blende; }
+.step.gr button:active, .step.gr button.haelt { transform: none; opacity: .75; }
+.kachel:active, .ich:active, .btn:active, .chipbtn:active { transform: none; opacity: .85; }
+.rad:active { transform: none; opacity: .8; }
+.step.gr button { will-change: auto; transform: none; transition: opacity .12s; }
+.feier-k circle { animation-name: blende; }
+
 </style>
 </head>
 <body>
