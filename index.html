@@ -122,7 +122,7 @@
   .steps.eins { grid-template-columns: minmax(0,1fr); }
   .step { display: grid; grid-template-columns: 44px minmax(0,1fr) 44px; align-items: center; background: var(--field); border-radius: 14px; padding: 4px; position: relative; }
   .step label { position: absolute; left: 0; right: 0; top: -1px; text-align: center; font-size: .62rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); pointer-events: none; }
-  .step button { width: 44px; height: 44px; border: 0; border-radius: 11px; background: var(--surface); color: var(--accent); font-weight: 800; font-size: 1.35rem; line-height: 1; box-shadow: 0 1px 3px rgba(10,16,48,.14); }
+  .step button { position: relative; padding: 0; width: 44px; height: 44px; border: 0; border-radius: 11px; background: var(--surface); color: var(--accent); font-weight: 800; font-size: 1.35rem; line-height: 1; box-shadow: 0 1px 3px rgba(10,16,48,.14); }
   .step button:active { transform: scale(.92); }
   .step input { width: 100%; min-width: 0; border: 0; background: transparent; text-align: center; font: inherit; font-weight: 800; font-size: 1.25rem; color: var(--fg); padding: 12px 0 2px; font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
   .step input::-webkit-outer-spin-button, .step input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -434,6 +434,24 @@ a.btn { text-decoration: none; }
 .view > .total { padding: 0 6px; }
 .view > .total b, #view > .total b { color: #fff; }
 .statsum { color: rgba(255,255,255,.85); }
+.hallo { margin: 4px 2px 0; font-size: 1.7rem; font-weight: 500; color: var(--on-bg-2); letter-spacing: -.01em; }
+.hallo b { color: var(--on-bg); font-weight: 800; }
+
+/* Symbole exakt mittig (iPad-Safari zentriert Text und SVG in Buttons mit grid/flex nicht zuverlässig) */
+.rad, .rund, .x, .mini { position: relative; }
+.rad svg, .rund svg, .x svg { position: absolute; left: 50%; top: 50%; margin: 0; transform: translate(-50%, -50%); }
+.rad svg { transform: translate(-50%, -50%); }
+.mini svg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.step button svg { position: absolute; left: 50%; top: 50%; width: 20px; height: 20px; transform: translate(-50%, -50%); stroke: currentColor; stroke-width: 3.2; fill: none; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.step.gr button svg { width: 26px; height: 26px; stroke-width: 3.4; }
+@media (max-width: 360px) { .step.gr button svg { width: 22px; height: 22px; } }
+/* Ruhige Animationen: Tasten als eigene Ebene, damit sie beim Drücken nicht flimmern */
+.step button, .rad, .rund, .kachel, .btn, .chipbtn { touch-action: manipulation; -webkit-tap-highlight-color: transparent; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+.step.gr button { will-change: transform; transform: translateZ(0); }
+.step.gr button:active, .step.gr button.haelt { transform: translateZ(0) scale(.9); }
+.step.gr input { transition: none; }
+@keyframes hops { from { transform: scale(1.12); } }
+.step.gr button { transition: transform .1s ease-out, opacity .2s; }
 
 </style>
 </head>
@@ -939,12 +957,13 @@ var Core = (function () {
     var ein = r.ein === true ? true : (Array.isArray(r.ein) ? r.ein.map(function (x) { return str(x, 40); }) : []);
     return { ein: ein, abr: !!r.abr, verw: !!r.verw, admin: !!r.admin };
   }
+  function erstesWort(n) { return String(n || '').trim().split(/\s+/)[0] || ''; }
   function werBin(cfg, key, adminKey) {
     if (!key) return null;
-    if (adminKey && key === adminKey) return { id: 'admin', name: cfg.set.admin || 'Admin', r: { ein: true, abr: true, verw: true, admin: true }, haupt: true };
+    if (adminKey && key === adminKey) return { id: 'admin', name: cfg.set.admin || 'Admin', hallo: erstesWort(cfg.set.admin || ''), r: { ein: true, abr: true, verw: true, admin: true }, haupt: true };
     for (var i = 0; i < cfg.pers.length; i++) {
       var p = cfg.pers[i];
-      if (p.tok === key && !p.gesperrt) { var r = rechte(p.r); if (r.admin) { r.ein = true; r.abr = true; r.verw = true; } return { id: p.id, name: p.name, r: r }; }
+      if (p.tok === key && !p.gesperrt) { var r = rechte(p.r); if (r.admin) { r.ein = true; r.abr = true; r.verw = true; } return { id: p.id, name: p.name, hallo: p.hallo || erstesWort(p.name), r: r }; }
     }
     return null;
   }
@@ -1079,7 +1098,7 @@ var Core = (function () {
   /* ---------- Anfragen bearbeiten ----------
      io: { adminKey, cfg(), saveCfg(c), entries(monate|null), add(e), del(ids), mail(o), now(), id(),
            ablegen(o) → { fid, url }, archivAdd(rec), archivListe(), archivHol(id), archivSetze(rec), altVersand() } */
-  var APP = 'sve-getraenke-abrechnung', VERSION = 10;
+  var APP = 'sve-getraenke-abrechnung', VERSION = 12;
   /* Jede Antwort trägt die Kennung, damit die App merkt, wenn sie mit einem anderen Skript verbunden ist */
   function handle(req, io) { var r = bearbeite(req, io); r.app = APP; r.v = VERSION; return r; }
   function bearbeite(req, io) {
@@ -1227,8 +1246,8 @@ var Core = (function () {
       var p = req.p || {}, pn = str(p.name, 40);
       if (!pn) return { ok: false, error: 'Name fehlt.' };
       var ex = p.id ? finde(cfg.pers, p.id) : null;
-      if (ex) { ex.name = pn; ex.r = rechte(p.r); ex.gesperrt = !!p.gesperrt; if (p.neuerLink) ex.tok = io.id() + io.id(); }
-      else { ex = { id: neueId(cfg.pers, pn), name: pn, tok: io.id() + io.id(), r: rechte(p.r), gesperrt: false, seit: io.now() }; cfg.pers.push(ex); }
+      if (ex) { ex.name = pn; ex.hallo = str(p.hallo, 30); ex.r = rechte(p.r); ex.gesperrt = !!p.gesperrt; if (p.neuerLink) ex.tok = io.id() + io.id(); }
+      else { ex = { id: neueId(cfg.pers, pn), name: pn, hallo: str(p.hallo, 30), tok: io.id() + io.id(), r: rechte(p.r), gesperrt: false, seit: io.now() }; cfg.pers.push(ex); }
       cfg.pers = nachSort(cfg.pers);
       io.saveCfg(cfg);
       return antwort({ person: ex.id });
@@ -1280,10 +1299,28 @@ var Core = (function () {
         if (!fan.length) return { ok: false, error: 'Bitte eine gültige E-Mail-Adresse eintragen.' };
         fkopie = (cfg.set.kopie || []).filter(function (m) { return fan.indexOf(m) < 0; });
         io.mail({ an: fan, kopie: fkopie, betreff: str(req.betreff, 150), text: String(req.text || '').slice(0, 4000), pdf: String(req.pdf), datei: fdatei });
+      } else if (req.kopieMail && (cfg.set.kopie || []).length) {
+        fkopie = cfg.set.kopie.slice();
+        io.mail({ an: fkopie, kopie: [], betreff: str(req.betreff, 150), text: String(req.text || '').slice(0, 4000), pdf: String(req.pdf), datei: fdatei });
       }
       var fab = ablegen(req.pdf, fdatei, req.z.slice(0, 7));
       var frec = archiviere({ id: fid, art: 'frei', name: fname, zeit: req.z, summe: fb.summe, an: fan, kopie: fkopie, wie: fwie, datei: fdatei, beleg: fb, betreff: str(req.betreff, 150) }, fab);
       return antwort({ archiv: leicht(frec), hinweis: fab.fehler || '' });
+    }
+
+    /* ---------- Kopie einer geteilten Monatsabrechnung an die Kopie-Adresse ---------- */
+    if (a === 'kopieMail') {
+      if (!(me.r.admin || me.r.abr)) return { ok: false, error: 'Dafür fehlt dir das Recht „Abrechnen“.' };
+      var kd = finde(cfg.depts, req.d), kan = (cfg.set.kopie || []).slice();
+      if (!kd || !istMonat(req.monat)) return { ok: false, error: 'Abteilung oder Monat fehlt.' };
+      if (!kan.length) return { ok: false, error: 'In den Einstellungen ist keine Kopie-Adresse eingetragen.' };
+      if (!req.pdf || String(req.pdf).length > 6000000) return { ok: false, error: 'Die PDF fehlt oder ist zu groß.' };
+      var kdatei = dateiOk(req.datei);
+      io.mail({ an: kan, kopie: [], betreff: str(req.betreff, 150), text: String(req.text || '').slice(0, 4000), pdf: String(req.pdf), datei: kdatei });
+      var kb = rechne(cfg, io.entries([req.monat]), kd.id, req.monat); kb.erstellt = erstellt(req);
+      var kab = ablegen(req.pdf, kdatei, req.monat);
+      archiviere({ art: 'abt', d: kd.id, name: kd.name, zeit: req.monat, summe: kb.summe, an: [], kopie: kan, wie: 'export', datei: kdatei, beleg: kb, betreff: str(req.betreff, 150) }, kab);
+      return antwort({ gesendet: kan, hinweis: kab.fehler || '' });
     }
 
     /* ---------- Archiv: alles, was die App verlassen hat ---------- */
@@ -1327,6 +1364,8 @@ var Core = (function () {
   var MON = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
   var WT = ['So.', 'Mo.', 'Di.', 'Mi.', 'Do.', 'Fr.', 'Sa.'];
   var I = {
+    pl: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4.5v15M4.5 12h15"/></svg>',
+    mi: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4.5 12h15"/></svg>',
     l: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
     r: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>',
     x: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
@@ -1632,11 +1671,15 @@ var Core = (function () {
     S.neu = null;
     zeigBusy();
   }
+  function hallo() {
+    var n = conn && S.me ? String(S.me.hallo || '').trim() : '';
+    return n && n !== 'Admin' && n !== 'Du' ? '<h2 class="hallo">Hallo <b>' + esc(n) + '</b></h2>' : '';
+  }
   function vStart() {
     var depts = meineDepts(), r = rechte();
-    if (!depts.length && !r.abr) return '<section class="card"><p class="empty">' + (r.verw ? 'Für dich ist keine Abteilung zum Eintragen freigegeben. Alles Weitere findest du über das Zahnrad oben rechts.' : 'Für dich ist hier noch nichts freigegeben. Frag den Admin.') + '</p></section>';
+    if (!depts.length && !r.abr) return hallo() + '<section class="card"><p class="empty">' + (r.verw ? 'Für dich ist keine Abteilung zum Eintragen freigegeben. Alles Weitere findest du über das Zahnrad oben rechts.' : 'Für dich ist hier noch nichts freigegeben. Frag den Admin.') + '</p></section>';
     var fd = r.abr ? frEntwurf() : null;
-    return '<p class="frage">Für wen trägst du ein?</p><div class="kacheln">' + depts.map(function (d, i) {
+    return hallo() + '<p class="frage">Für wen trägst du ein?</p><div class="kacheln">' + depts.map(function (d, i) {
       return '<button class="kachel" type="button" style="--i:' + i + '" data-act="oeffne" data-id="' + esc(d.id) + '"><span class="kt"><b>' + esc(d.name) + '</b></span>' + I.r + '</button>';
     }).join('') + (r.abr ? '<button class="kachel frei" type="button" style="--i:' + depts.length + '" data-act="freiAuf"><span class="kt"><b>+ Freie Abrechnung</b><small>' + (fd ? 'Entwurf: ' + esc(fd.name.trim() || 'ohne Namen') : 'Eigener Name, sofort senden oder exportieren') + '</small></span>' + I.r + '</button>' : '') + '</div>';
   }
@@ -1683,9 +1726,9 @@ var Core = (function () {
   }
   function zaehler(ctx, art, fld, wert, label) {
     return '<div class="step gr' + (wert ? ' an' : '') + '" data-ctx="' + ctx + '" data-art="' + esc(art) + '" data-fld="' + fld + '">' +
-      '<button type="button" class="m" data-act="minus" aria-label="' + label + ' weniger">−</button>' +
+      '<button type="button" class="m" data-act="minus" aria-label="' + label + ' weniger">' + I.mi + '</button>' +
       '<input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="9999" value="' + (wert || 0) + '" data-in="menge" aria-label="' + label + '">' +
-      '<button type="button" class="p" data-act="plus" aria-label="' + label + ' mehr">+</button></div>';
+      '<button type="button" class="p" data-act="plus" aria-label="' + label + ' mehr">' + I.pl + '</button></div>';
   }
   function artKarte(ctx, a, i, q, mitKisten, mitRabatt) {
     var st = a.typ === 'stueck', pr = Core.cent(a.preis), voll = pr * a.kiste, rab = (mitRabatt && !st) ? Core.kistenRabatt(pr, a.kiste, a.rt, a.rv) : 0, sorte = artSorte(a, i), an = !!(q.k || q.f);
@@ -1919,7 +1962,17 @@ var Core = (function () {
     } catch (e) {}
     return Promise.resolve(laden());
   }
-  function pdfOeffnen(id) { pdfTeilen(bill(id, S.abr)); }
+  function pdfOeffnen(id) {
+    var b = bill(id, S.abr);
+    pdfTeilen(b).then(function (ok) { if (ok && conn && !NUR_VORSCHAU && (S.cfg.set.kopie || []).length && !b.leer) sheetKopie(b); });
+  }
+  /* Nach dem Teilen: Kopie an die Kopie-Adresse aus den Einstellungen anbieten */
+  function sheetKopie(b) {
+    var kopie = S.cfg.set.kopie || [];
+    S.kopieB = { monat: b.monat, d: b.dept.id };
+    sheet('Kopie senden?', '<p class="hint">Soll die Abrechnung für <b>' + esc(b.dept.name) + '</b> (' + esc(monatText(b.monat)) + ', ' + eur(b.summe) + ') auch als Kopie an <b>' + esc(kopie.join(', ')) + '</b> gehen?</p><p class="hint">Sie wird danach im Archiv gespeichert, die PDF auch in Google Drive.</p>' +
+      '<div class="reihe"><button class="btn hell" type="button" data-act="zu">Nein</button><button class="btn" type="button" data-act="kopieJa" data-busy>Ja, senden</button></div>');
+  }
 
   /* ---------- Abrechnung in A4: eine Zeichnung, zwei Ausgaben (PDF zum Verschicken, Bild zum Ansehen) ---------- */
   var PT = 0.352778, logoBild = new Image(); logoBild.src = LOGO;
@@ -2188,6 +2241,7 @@ var Core = (function () {
   function sheetFrFertig(req) {
     S.frExp = req;
     sheet('Abrechnung erledigt?', '<p class="hint">Hast du die Abrechnung für <b>' + esc(req.name) + '</b> (' + eur(req.summe) + ') verschickt?</p><p class="hint">Dann speichere ich sie im Archiv, lege die PDF in Google Drive ab und setze alles auf Null.</p>' +
+      (conn && !NUR_VORSCHAU && (S.cfg.set.kopie || []).length ? '<label class="sw"><span class="t">Auch als Kopie senden<small>an ' + esc((S.cfg.set.kopie || []).join(', ')) + '</small></span><input type="checkbox" id="frKopie" checked></label>' : '') +
       '<div class="reihe"><button class="btn hell" type="button" data-act="frWeiterBearb">Nein, weiter bearbeiten</button><button class="btn" type="button" data-act="frExportJa" data-busy>Ja, speichern und leeren</button></div>');
   }
 
@@ -2463,13 +2517,14 @@ var Core = (function () {
     $('#rabHint').textContent = S.ed.modus === 'person' ? 'Gezählt wird je Person über den ganzen Monat' : 'Gezählt wird je Tag: jede volle Kiste bekommt den Rabatt';
   }
   function sheetPers(id, frisch) {
-    var p = id ? Core.finde(S.cfg.pers, id) : { name: '', r: { ein: true, abr: false, verw: false, admin: false }, gesperrt: false };
+    var p = id ? Core.finde(S.cfg.pers, id) : { name: '', hallo: '', r: { ein: true, abr: false, verw: false, admin: false }, gesperrt: false };
     var r = p.r || {}, einArt = r.ein === true ? 'alle' : (r.ein && r.ein.length ? 'wahl' : 'nein');
     S.ed = { typ: 'pers', id: id || null, ein: einArt };
     var link = id ? einladung(p.tok) : '';
     sheet(id ? esc(p.name) : 'Neue Person',
       (id ? '<div class="feld"><span>Persönlicher Link</span>' + (frisch ? '<div class="msg ok">Gespeichert. Schick der Person diesen Link, er ist ihr Zugang.</div>' : '') + '<input class="eingabe" id="pLink" readonly value="' + esc(link) + '"><div class="reihe"><button class="btn hell klein" data-act="linkKopieren">Kopieren</button><button class="btn klein" data-act="linkTeilen">Teilen</button></div>' + (conn ? '' : '<p class="hint">In der Vorschau funktionieren Links noch nicht.</p>') + '</div>' : '') +
       '<label class="feld"><span>Name</span><input data-f="name" value="' + esc(p.name) + '" maxlength="40" autocomplete="off"></label>' +
+      '<label class="feld"><span>Begrüßung auf der Startseite</span><input data-f="hallo" value="' + esc(p.hallo || '') + '" maxlength="30" autocomplete="off" placeholder="z. B. nur der Vorname"><small class="hint">Dann steht dort „Hallo …“. Leer lassen: das erste Wort des Namens.</small></label>' +
       '<label class="sw"><span class="t">Admin<small>Darf alles, auch Personen einladen und sperren</small></span><input type="checkbox" data-f="admin" data-in="persAdmin"' + (r.admin ? ' checked' : '') + '></label>' +
       '<div id="persRechte"><div class="feld"><span>Eintragen</span><div class="seg">' + segBtn('ein', 'nein', einArt, 'Nein') + segBtn('ein', 'alle', einArt, 'Alle Abteilungen') + segBtn('ein', 'wahl', einArt, 'Auswahl') + '</div></div>' +
       '<div id="einWahl">' + S.cfg.depts.map(function (d) { return '<label class="sw"><span class="t">' + esc(d.name) + '</span><input type="checkbox" data-dept="' + esc(d.id) + '"' + (Array.isArray(r.ein) && r.ein.indexOf(d.id) >= 0 ? ' checked' : '') + '></label>'; }).join('') + '</div>' +
@@ -2551,23 +2606,23 @@ var Core = (function () {
   function feld(n) { var el = $('#sheet [data-f="' + n + '"]'); if (!el) return undefined; return el.type === 'checkbox' ? el.checked : el.value.trim(); }
 
   /* ---------- Bedienung ---------- */
-  function mengeSetzen(step, wert) {
+  function mengeSetzen(step, wert, still) {
     var ctx = step.getAttribute('data-ctx'), art = step.getAttribute('data-art'), fld = step.getAttribute('data-fld'), q = ctx === 'd' ? S.draft : ctx === 'f' ? fr().q : S.pq;
     wert = Math.max(0, Math.min(9999, Math.round(Number(wert) || 0)));
     if (!q[art]) q[art] = {};
     q[art][fld] = wert;
     step.classList.toggle('an', wert > 0);
-    var inp = $('input', step); if (inp && !ruhig) { inp.classList.remove('hops'); void inp.offsetWidth; inp.classList.add('hops'); }
-    if (ctx === 'd') sumUpd(true); else if (ctx === 'f') frUpd(true); else pSumUpd(true);
+    var inp = $('input', step); if (inp && !ruhig && !still) { inp.classList.remove('hops'); void inp.offsetWidth; inp.classList.add('hops'); }
+    if (ctx === 'd') sumUpd(!still); else if (ctx === 'f') frUpd(!still); else pSumUpd(!still);
     return wert;
   }
-  function schritt(b, n) { var st = b.parentNode, inp = $('input', st); inp.value = mengeSetzen(st, (Number(inp.value) || 0) + n); }
+  function schritt(b, n, still) { var st = b.parentNode, inp = $('input', st); inp.value = mengeSetzen(st, (Number(inp.value) || 0) + n, still); }
   var halt = null, haltLief = false;
   function haltStopp() { if (!halt) return; clearTimeout(halt.t); clearInterval(halt.i); haltLief = halt.lief; halt.b.classList.remove('haelt'); halt = null; }
   document.addEventListener('pointerdown', function (ev) {
     var b = ev.target.closest && ev.target.closest('[data-act="plus"], [data-act="minus"]'); haltStopp(); haltLief = false; if (!b) return;
     var h = halt = { b: b, lief: false, n: b.getAttribute('data-act') === 'plus' ? 1 : -1 };
-    h.t = setTimeout(function () { b.classList.add('haelt'); h.i = setInterval(function () { if (!b.isConnected) { haltStopp(); return; } h.lief = true; schritt(b, h.n); }, 85); }, 430);
+    h.t = setTimeout(function () { b.classList.add('haelt'); h.i = setInterval(function () { if (!b.isConnected) { haltStopp(); return; } h.lief = true; schritt(b, h.n, true); }, 85); }, 430);
   });
   ['pointerup', 'pointercancel'].forEach(function (typ) { window.addEventListener(typ, haltStopp, true); });
   window.addEventListener('blur', function (ev) { if (ev.target === window) haltStopp(); });
@@ -2594,8 +2649,15 @@ var Core = (function () {
       pdfTeilen(p.b).then(function () { sheetFrFertig(req); });
     },
     frWeiterBearb: function () { S.frExp = null; schliesse(); },
+    kopieJa: function () {
+      var k = S.kopieB; if (!k) { schliesse(); return; }
+      if (conn && S.skript && S.skript < 11) { sheetSkriptAlt('Dein Google-Skript ist älter als die App und kann die Kopie noch nicht senden.'); return; }
+      var b = bill(k.d, k.monat);
+      tu(api('kopieMail', { monat: k.monat, d: k.d, pdf: pdfBase64(b), datei: dateiName(b), betreff: mailBetreff(b), text: mailText(b), erstellt: { am: heute() } })).then(function (r) { S.kopieB = null; schliesse(); feier('Kopie gesendet', (r.gesendet || []).join(', '), 'mail'); if (r.hinweis) toast(r.hinweis, true); }, function () {});
+    },
     frExportJa: function () {
       var req = S.frExp; if (!req) { schliesse(); return; }
+      var kk = $('#frKopie'); req.kopieMail = !!(kk && kk.checked);
       tu(api('frei', req)).then(function (r) { S.frExp = null; schliesse(); frNeu(); feier('Gespeichert', 'im Archiv · ' + req.name); if (r.hinweis) toast(r.hinweis, true); }, function () {});
     },
     frSenden: function () {
@@ -2765,7 +2827,7 @@ var Core = (function () {
       var name = feld('name'); if (!name) { toast('Name fehlt', true); return; }
       var ein = S.ed.ein === 'alle' ? true : S.ed.ein === 'wahl' ? $$('#einWahl input:checked').map(function (c) { return c.getAttribute('data-dept'); }) : [];
       var neuP = !S.ed.id;
-      tu(api('person', { p: { id: S.ed.id || undefined, name: name, gesperrt: !!feld('gesperrt'), r: { admin: feld('admin'), ein: ein, abr: feld('abr'), verw: feld('verw') } } }))
+      tu(api('person', { p: { id: S.ed.id || undefined, name: name, hallo: feld('hallo'), gesperrt: !!feld('gesperrt'), r: { admin: feld('admin'), ein: ein, abr: feld('abr'), verw: feld('verw') } } }))
         .then(function (r) { render(); if (neuP) sheetPers(r.person, true); else { schliesse(); feier('Gespeichert', name); } }, function () {});
     },
     persWeg: function (b) {
