@@ -472,6 +472,13 @@ a.btn { text-decoration: none; }
 .step.gr button { will-change: auto; transform: none; transition: opacity .12s; }
 .feier-k circle { animation-name: blende; }
 
+.erinn { display: grid; gap: 4px; width: 100%; text-align: left; padding: 14px 16px; margin: 10px 0 4px; border: 0; border-radius: 18px; background: var(--surface); color: var(--fg); box-shadow: 0 8px 20px var(--shadow); border-left: 6px solid var(--warn); }
+.erinn.ok { border-left-color: var(--ok); }
+.erinn.rot { border-left-color: var(--danger); }
+.erinn .e-k { font-weight: 800; font-size: 1rem; line-height: 1.3; }
+.erinn .e-t { font-size: .86rem; color: var(--muted); font-weight: 600; line-height: 1.35; }
+.erinn:active { opacity: .85; }
+
 </style>
 </head>
 <body>
@@ -1117,7 +1124,7 @@ var Core = (function () {
   /* ---------- Anfragen bearbeiten ----------
      io: { adminKey, cfg(), saveCfg(c), entries(monate|null), add(e), del(ids), mail(o), now(), id(),
            ablegen(o) → { fid, url }, archivAdd(rec), archivListe(), archivHol(id), archivSetze(rec), altVersand() } */
-  var APP = 'sve-getraenke-abrechnung', VERSION = 12;
+  var APP = 'sve-getraenke-abrechnung', VERSION = 13;
   /* Jede Antwort trägt die Kennung, damit die App merkt, wenn sie mit einem anderen Skript verbunden ist */
   function handle(req, io) { var r = bearbeite(req, io); r.app = APP; r.v = VERSION; return r; }
   function bearbeite(req, io) {
@@ -1325,6 +1332,18 @@ var Core = (function () {
       var fab = ablegen(req.pdf, fdatei, req.z.slice(0, 7));
       var frec = archiviere({ id: fid, art: 'frei', name: fname, zeit: req.z, summe: fb.summe, an: fan, kopie: fkopie, wie: fwie, datei: fdatei, beleg: fb, betreff: str(req.betreff, 150) }, fab);
       return antwort({ archiv: leicht(frec), hinweis: fab.fehler || '' });
+    }
+
+    /* ---------- Monatsabrechnung per Teilen (z. B. WhatsApp) als erledigt merken, oder wieder öffnen ---------- */
+    if (a === 'erledigt' || a === 'offen') {
+      if (!(me.r.admin || me.r.abr)) return { ok: false, error: 'Dafür fehlt dir das Recht „Abrechnen“.' };
+      var ed = finde(cfg.depts, req.d);
+      if (!ed || !istMonat(req.monat)) return { ok: false, error: 'Abteilung oder Monat fehlt.' };
+      cfg.sent = cfg.sent || {};
+      if (a === 'erledigt') cfg.sent[req.monat + '|' + ed.id] = { at: io.now(), by: me.name, an: [], wie: 'geteilt', sum: Math.round(Number(req.summe) || 0) };
+      else delete cfg.sent[req.monat + '|' + ed.id];
+      io.saveCfg(cfg);
+      return antwort({});
     }
 
     /* ---------- Kopie einer geteilten Monatsabrechnung an die Kopie-Adresse ---------- */
@@ -1694,11 +1713,41 @@ var Core = (function () {
     var n = conn && S.me ? String(S.me.hallo || '').trim() : '';
     return n && n !== 'Admin' && n !== 'Du' ? '<h2 class="hallo">Hallo <b>' + esc(n) + '</b></h2>' : '';
   }
+  /* Erinnerung zum Monatsende: wurden alle Abrechnungen erledigt, die etwas enthalten? */
+  function erinnerungMonat() {
+    var t = heute(), tag = +t.slice(8), m = t.slice(0, 7), tage = new Date(+t.slice(0, 4), +t.slice(5, 7), 0).getDate();
+    if (tag > tage - 5) return m; if (tag <= 10) return schiebeMonat(m, -1); return null;
+  }
+  function erinnerung() {
+    var r = rechte(); if (!conn || !r.abr || S.sperre) return '';
+    var m = erinnerungMonat(); if (!m || !brauche(m)) return '';
+    var rel = abrDepts(m).filter(function (x) { return !x.b.leer; }); if (!rel.length) return '';
+    var ok = [], fehlt = [], anders = [], ohneMail = [], neu = null;
+    rel.forEach(function (x) {
+      var st = versandStatus(x, m);
+      if (st.s) { if (st.anders) anders.push(x.d.name); else ok.push(x.d.name); if (!neu || st.s.at > neu.at) neu = st.s; }
+      else { fehlt.push(x.d.name); if (!(x.d.mails || []).length) ohneMail.push(x.d.name); }
+    });
+    var cls, kopf, txt = '';
+    function dat(s) { var d = new Date(s.at); return pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + '.' + d.getFullYear() + ' um ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ' Uhr'; }
+    if (!fehlt.length && !anders.length) {
+      cls = 'ok'; kopf = esc(kurz(neu.by)) + ' hat die Abrechnungen am ' + dat(neu) + ' versendet.'; txt = monatText(m) + ': alle ' + rel.length + ' Abteilungen erledigt.';
+    } else if (!ok.length && !anders.length) {
+      cls = 'rot'; kopf = 'Die Abrechnungen für ' + monatText(m) + ' sind noch nicht versendet.'; txt = 'Offen: ' + fehlt.join(', ') + '.';
+    } else {
+      cls = 'warn'; kopf = monatText(m) + ': ' + ok.length + ' von ' + rel.length + ' Abrechnungen erledigt.';
+      if (fehlt.length) txt += 'Es fehlen: ' + fehlt.join(', ') + '. ';
+      if (anders.length) txt += 'Nach dem Versand geändert: ' + anders.join(', ') + '. ';
+      if (ohneMail.length) txt += 'Ohne E-Mail-Adresse: ' + ohneMail.join(', ') + '. ';
+      if (neu) txt += 'Zuletzt: ' + kurz(neu.by) + ', ' + dat(neu) + '.';
+    }
+    return '<button type="button" class="erinn ' + cls + '" data-act="erinnAuf" data-m="' + m + '"><span class="e-k">' + kopf + '</span><span class="e-t">' + esc(txt.trim()) + '</span></button>';
+  }
   function vStart() {
     var depts = meineDepts(), r = rechte();
     if (!depts.length && !r.abr) return hallo() + '<section class="card"><p class="empty">' + (r.verw ? 'Für dich ist keine Abteilung zum Eintragen freigegeben. Alles Weitere findest du über das Zahnrad oben rechts.' : 'Für dich ist hier noch nichts freigegeben. Frag den Admin.') + '</p></section>';
     var fd = r.abr ? frEntwurf() : null;
-    return hallo() + '<p class="frage">Für wen trägst du ein?</p><div class="kacheln">' + depts.map(function (d, i) {
+    return hallo() + erinnerung() + '<p class="frage">Für wen trägst du ein?</p><div class="kacheln">' + depts.map(function (d, i) {
       return '<button class="kachel" type="button" style="--i:' + i + '" data-act="oeffne" data-id="' + esc(d.id) + '"><span class="kt"><b>' + esc(d.name) + '</b></span>' + I.r + '</button>';
     }).join('') + (r.abr ? '<button class="kachel frei" type="button" style="--i:' + depts.length + '" data-act="freiAuf"><span class="kt"><b>+ Freie Abrechnung</b><small>' + (fd ? 'Entwurf: ' + esc(fd.name.trim() || 'ohne Namen') : 'Eigener Name, sofort senden oder exportieren') + '</small></span>' + I.r + '</button>' : '') + '</div>';
   }
@@ -1898,7 +1947,7 @@ var Core = (function () {
   }
   function versandStatus(x, m) {
     var s = (S.cfg.sent || {})[m + '|' + x.d.id];
-    if (s) { var anders = s.sum !== x.b.summe; return { cls: anders ? 'warn' : 'ok', txt: 'Gesendet am ' + zeitText(s.at).slice(0, 6) + (anders ? ' · seitdem geändert' : ''), s: s }; }
+    if (s) { var anders = s.sum !== x.b.summe; return { cls: anders ? 'warn' : 'ok', txt: (s.wie === 'geteilt' ? 'Geteilt, erledigt am ' : 'Gesendet am ') + zeitText(s.at).slice(0, 6) + (s.by ? ' von ' + kurz(s.by) : '') + (anders ? ' · seitdem geändert' : ''), s: s, anders: anders }; }
     if (x.b.leer) return { cls: '', txt: 'Keine Einträge' };
     if (!(x.d.mails || []).length) return { cls: 'warn', txt: 'Keine E-Mail-Adresse hinterlegt' };
     return { cls: '', txt: 'Noch nicht gesendet' };
@@ -1916,7 +1965,7 @@ var Core = (function () {
       var det = b.leer ? '' : (b.person ? mehrzahl(b.rows.length, 'Person', 'Personen') : mehrzahl(b.rows.length, 'Tag', 'Tage')) + ' · ' + teileText(b.person ? 0 : b.kisten, b.flaschen - (b.person ? 0 : kistenFlaschen(b)), b.stueck);
       h += '<section class="card abr"><div class="oben"><b>' + esc(x.d.name) + '</b><span class="amt num">' + eur(b.summe) + '</span></div>' +
         (det ? '<div class="sub">' + esc(det) + '</div>' : '') + '<div><span class="stat ' + st.cls + '">' + esc(st.txt) + '</span></div>' +
-        (b.leer ? '' : '<div class="reihe"><button class="btn hell klein" data-act="ansehen" data-id="' + esc(x.d.id) + '">Ansehen</button><button class="btn klein" data-act="senden" data-id="' + esc(x.d.id) + '" data-busy>' + (st.s ? 'Erneut senden' : 'Senden') + '</button></div>') + '</section>';
+        (b.leer ? '' : '<div class="reihe"><button class="btn hell klein" data-act="ansehen" data-id="' + esc(x.d.id) + '">Ansehen</button><button class="btn klein" data-act="senden" data-id="' + esc(x.d.id) + '" data-busy>' + (st.s ? 'Erneut senden' : 'Senden') + '</button>' + (st.s && st.s.wie === 'geteilt' ? '<button class="btn hell klein" data-act="wiederOffen" data-id="' + esc(x.d.id) + '" data-busy>Wieder offen</button>' : '') + '</div>') + '</section>';
     });
     return h + '</div>';
   }
@@ -1983,14 +2032,15 @@ var Core = (function () {
   }
   function pdfOeffnen(id) {
     var b = bill(id, S.abr);
-    pdfTeilen(b).then(function (ok) { if (ok && conn && !NUR_VORSCHAU && (S.cfg.set.kopie || []).length && !b.leer) sheetKopie(b); });
+    pdfTeilen(b).then(function (ok) { if (ok && !b.leer && (S.cfg.depts || []).some(function (d) { return d.id === b.dept.id; })) sheetErledigt(b); });
   }
-  /* Nach dem Teilen: Kopie an die Kopie-Adresse aus den Einstellungen anbieten */
-  function sheetKopie(b) {
-    var kopie = S.cfg.set.kopie || [];
-    S.kopieB = { monat: b.monat, d: b.dept.id };
-    sheet('Kopie senden?', '<p class="hint">Soll die Abrechnung für <b>' + esc(b.dept.name) + '</b> (' + esc(monatText(b.monat)) + ', ' + eur(b.summe) + ') auch als Kopie an <b>' + esc(kopie.join(', ')) + '</b> gehen?</p><p class="hint">Sie wird danach im Archiv gespeichert, die PDF auch in Google Drive.</p>' +
-      '<div class="reihe"><button class="btn hell" type="button" data-act="zu">Nein</button><button class="btn" type="button" data-act="kopieJa" data-busy>Ja, senden</button></div>');
+  /* Nach dem Teilen (WhatsApp, Dateien …): erledigt oder noch offen? Dazu optional die Kopie an die Kopie-Adresse */
+  function sheetErledigt(b) {
+    var kopie = S.cfg.set.kopie || [], mitKopie = conn && !NUR_VORSCHAU && kopie.length;
+    S.kopieB = { monat: b.monat, d: b.dept.id, summe: b.summe };
+    sheet('Abrechnung erledigt?', '<p class="hint">Hast du die Abrechnung für <b>' + esc(b.dept.name) + '</b> (' + esc(monatText(b.monat)) + ', ' + eur(b.summe) + ') verschickt?</p><p class="hint">Dann steht sie als erledigt in der Abrechnung und die Erinnerung auf der Startseite zählt sie mit.</p>' +
+      (mitKopie ? '<label class="sw"><span class="t">Auch als Kopie senden<small>an ' + esc(kopie.join(', ')) + ' · im Archiv und in Drive abgelegt</small></span><input type="checkbox" id="kopieMit" checked></label>' : '') +
+      '<div class="reihe"><button class="btn hell" type="button" data-act="zu">Noch offen</button><button class="btn" type="button" data-act="erledigtJa" data-busy>Ja, erledigt</button></div>');
   }
 
   /* ---------- Abrechnung in A4: eine Zeichnung, zwei Ausgaben (PDF zum Verschicken, Bild zum Ansehen) ---------- */
@@ -2646,6 +2696,7 @@ var Core = (function () {
   ['pointerup', 'pointercancel'].forEach(function (typ) { window.addEventListener(typ, haltStopp, true); });
   window.addEventListener('blur', function (ev) { if (ev.target === window) haltStopp(); });
   document.addEventListener('contextmenu', function (ev) { if (ev.target.closest && ev.target.closest('.step')) ev.preventDefault(); });
+  function nachEntsperren() { var z = S.ziel; S.ziel = null; geh('admin'); if (z && rechte().abr) { S.abr = z; geh('abr'); } }
   var A = {
     oeffne: function (b) { S.dept = b.getAttribute('data-id'); S.draft = {}; S.tag = heute(); geh('dept'); },
     zurueck: function () { zurueck(); },
@@ -2668,12 +2719,16 @@ var Core = (function () {
       pdfTeilen(p.b).then(function () { sheetFrFertig(req); });
     },
     frWeiterBearb: function () { S.frExp = null; schliesse(); },
-    kopieJa: function () {
+    erledigtJa: function () {
       var k = S.kopieB; if (!k) { schliesse(); return; }
-      if (conn && S.skript && S.skript < 11) { sheetSkriptAlt('Dein Google-Skript ist älter als die App und kann die Kopie noch nicht senden.'); return; }
-      var b = bill(k.d, k.monat);
-      tu(api('kopieMail', { monat: k.monat, d: k.d, pdf: pdfBase64(b), datei: dateiName(b), betreff: mailBetreff(b), text: mailText(b), erstellt: { am: heute() } })).then(function (r) { S.kopieB = null; schliesse(); feier('Kopie gesendet', (r.gesendet || []).join(', '), 'mail'); if (r.hinweis) toast(r.hinweis, true); }, function () {});
+      if (conn && S.skript && S.skript < 13) { sheetSkriptAlt('Dein Google-Skript ist älter als die App und kann „erledigt“ noch nicht speichern.'); return; }
+      var b = bill(k.d, k.monat), mit = $('#kopieMit') && $('#kopieMit').checked;
+      var kopieSchritt = mit ? api('kopieMail', { monat: k.monat, d: k.d, pdf: pdfBase64(b), datei: dateiName(b), betreff: mailBetreff(b), text: mailText(b), erstellt: { am: heute() } }) : Promise.resolve({});
+      tu(kopieSchritt.then(function (r1) { return api('erledigt', { monat: k.monat, d: k.d, summe: b.summe }).then(function (r2) { r2.kopie = r1.gesendet || null; r2.hinweis = r1.hinweis || ''; return r2; }); }))
+        .then(function (r) { S.kopieB = null; schliesse(); render(); feier('Erledigt', r.kopie ? 'Kopie an ' + r.kopie.join(', ') : b.dept.name, r.kopie ? 'mail' : undefined); if (r.hinweis) toast(r.hinweis, true); }, function () {});
     },
+    wiederOffen: function (b) { var id = b.getAttribute('data-id'); tu(api('offen', { monat: S.abr, d: id })).then(function () { render(); }, function () {}); },
+    erinnAuf: function (b) { A.zahnrad(b); },
     frExportJa: function () {
       var req = S.frExp; if (!req) { schliesse(); return; }
       var kk = $('#frKopie'); req.kopieMail = !!(kk && kk.checked);
@@ -2724,13 +2779,14 @@ var Core = (function () {
         schliesse(); render(); feier('Gesendet', mails[0], 'mail');
       }, function () {});
     },
-    zahnrad: function () {
+    zahnrad: function (b) {
+      S.ziel = (b && b.getAttribute && b.getAttribute('data-m')) || null;
       var r = rechte();
       if (!(r.abr || r.verw || r.admin)) { sheetKonto(); return; }
       if (conn && typeof S.cfg.set.pw !== 'boolean') { sheetSkriptAlt(); return; }
       if (S.cfg.set.pw) { sheetPw(); return; }
       if (r.admin) { sheetPwNeu(); return; }
-      S.offen = true; geh('admin');
+      S.offen = true; nachEntsperren();
     },
     pwOk: function () {
       var inp = $('#pwIn'), pw = inp.value, btn = $('#pwBtn'), err = $('#pwErr'); if (!pw) { inp.focus(); return; }
@@ -2738,7 +2794,7 @@ var Core = (function () {
       var lokal = S.cfg.set.pwS && S.cfg.set.pwH ? Promise.resolve().then(function () { if (Core.sha256(S.cfg.set.pwS + pw) !== S.cfg.set.pwH) { var f = new Error('Das Passwort stimmt nicht.'); f.code = 'pw'; throw f; } }) : api('pw', { pw: pw });
       lokal.then(function () {
         S.offen = true; S.pw = pw; inp.blur(); var sc = $('#schloss'); if (sc) sc.classList.add('auf');
-        setTimeout(function () { schliesse(); geh('admin'); }, ruhig ? 0 : 420);
+        setTimeout(function () { schliesse(); nachEntsperren(); }, ruhig ? 0 : 420);
       }, function (e) {
         if (e.code === 'auth' || e.code === 'fremd') { S.sperre = e.message; S.sperreArt = e.code; schliesse(); render(); return; }
         btn.disabled = false; err.hidden = false; err.textContent = e.message; wackel($('.sheet-card')); inp.value = ''; inp.focus();
@@ -2746,7 +2802,7 @@ var Core = (function () {
     },
     pwNeuOk: function () {
       var pw = pwPaar(); if (!pw) return;
-      tu(api('pwSetzen', { pw: pw })).then(function () { S.offen = true; S.pw = pw; schliesse(); feier('Passwort gespeichert'); geh('admin'); }, function () {});
+      tu(api('pwSetzen', { pw: pw })).then(function () { S.offen = true; S.pw = pw; schliesse(); feier('Passwort gespeichert'); nachEntsperren(); }, function () {});
     },
     pwAendern: function () {
       var pw = pwPaar(); if (!pw) return;
