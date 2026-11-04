@@ -519,6 +519,12 @@ a.btn { text-decoration: none; }
 .tg .list { padding: 8px 2px 0; }
 #view > .vmfeld span { color: var(--on-bg-2); }
 
+/* Stand 15: Artikel-Reihenfolge, Storno */
+.rowmain { flex: 1; min-width: 0; display: flex; align-items: center; text-align: left; background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.mini:disabled { opacity: .35; }
+.feld select { width: 100%; border: 1.5px solid var(--line); border-radius: 12px; padding: 11px 12px; font: inherit; font-size: 1rem; background: var(--field); color: var(--fg); }
+.stbox { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
+
 </style>
 </head>
 <body>
@@ -1055,7 +1061,7 @@ var Core = (function () {
     out.depts = cfg.depts.filter(function (d) { return voll || darfEin(me, d.id); }).map(function (d) {
       return { id: d.id, name: d.name, modus: d.modus, rabatt: !!d.rabatt, aktiv: d.aktiv !== false, leute: nachSort(d.leute), mails: voll ? (d.mails || []) : [] };
     });
-    if (me.r.admin) { out.pers = nachSort(cfg.pers); out.set.admin = cfg.set.admin; out.set.kopie = cfg.set.kopie || []; }
+    if (me.r.admin) { out.storno = cfg.storno || {}; out.pers = nachSort(cfg.pers); out.set.admin = cfg.set.admin; out.set.kopie = cfg.set.kopie || []; }
     return out;
   }
 
@@ -1093,7 +1099,7 @@ var Core = (function () {
   /* ---------- Abrechnung einer Abteilung für einen Monat ---------- */
   function rechne(cfg, entries, deptId, monat) {
     var dept = finde(cfg.depts, deptId) || { id: deptId, name: deptId, modus: 'tag', leute: [] };
-    var mine = entries.filter(function (e) { return e.d === deptId && e.z.slice(0, 7) === monat; });
+    var mine = entries.filter(function (e) { return e.d === deptId && !e.x && e.z.slice(0, 7) === monat; });
     var person = mine.length ? mine.some(function (e) { return !!e.p; }) : dept.modus === 'person';
     var units = {}, order = [], artInfo = {}, artSeen = [];
     mine.forEach(function (e) {
@@ -1170,7 +1176,7 @@ var Core = (function () {
   /* ---------- Anfragen bearbeiten ----------
      io: { adminKey, cfg(), saveCfg(c), entries(monate|null), add(e), del(ids), mail(o), now(), id(),
            ablegen(o) → { fid, url }, archivAdd(rec), archivListe(), archivHol(id), archivSetze(rec), altVersand() } */
-  var APP = 'sve-getraenke-abrechnung', VERSION = 14;
+  var APP = 'sve-getraenke-abrechnung', VERSION = 15;
   /* Jede Antwort trägt die Kennung, damit die App merkt, wenn sie mit einem anderen Skript verbunden ist */
   function handle(req, io) { var r = bearbeite(req, io); r.app = APP; r.v = VERSION; return r; }
   function bearbeite(req, io) {
@@ -1179,7 +1185,7 @@ var Core = (function () {
     var a = req.a || 'init';
 
     function monate(list) { return (Array.isArray(list) ? list : []).filter(istMonat).slice(0, 24); }
-    function meine(list) { return (me.r.admin || me.r.verw || me.r.abr) ? list : list.filter(function (e) { return darfEin(me, e.d); }); }
+    function meine(list) { list = list.filter(function (e) { return !e.x; }); return (me.r.admin || me.r.verw || me.r.abr) ? list : list.filter(function (e) { return darfEin(me, e.d); }); }
     function antwort(extra) { var o = { ok: true, me: me, cfg: sicht(cfg, me) }; for (var k in extra) o[k] = extra[k]; return o; }
     function dateiOk(x) { var d = str(x, 90).replace(/[^\wäöüÄÖÜß.-]/g, '_'); return /\.pdf$/i.test(d) ? d : (d || 'Abrechnung') + '.pdf'; }
     /* Kopfdaten der PDF einfrieren, damit sie im Archiv genauso wieder gezeichnet wird */
@@ -1253,6 +1259,43 @@ var Core = (function () {
         io.ersetze(alt0.id, e2);
       }
       return antwort({ ent: meine(io.entries([am])), monate: [am] });
+    }
+
+    /* ---------- Monat einer Abteilung stornieren (nur Admin): Einträge bleiben im Blatt, zählen aber nirgends mehr ---------- */
+    if (a === 'stornieren') {
+      if (!me.r.admin) return { ok: false, error: 'Stornieren dürfen nur Admins.' };
+      var sdep = finde(cfg.depts, req.d), smon = istMonat(req.monat) ? req.monat : null;
+      if (!sdep || !smon) return { ok: false, error: 'Abteilung oder Monat fehlt.' };
+      var sids = io.entries([smon]).filter(function (e) { return e.d === sdep.id && !e.x; }).map(function (e) { return e.id; });
+      if (!sids.length) return { ok: false, error: 'In diesem Monat gibt es für ' + sdep.name + ' nichts zu stornieren.' };
+      var sx = { at: io.now(), by: me.name, grund: str(req.grund, 120) };
+      io.markiere(sids, sx);
+      cfg = io.cfg(); cfg.storno = cfg.storno || {};
+      var sk = smon + '|' + sdep.id, so = cfg.storno[sk] || { ids: [], n: 0 };
+      cfg.storno[sk] = { at: sx.at, by: sx.by, grund: sx.grund || so.grund || '', n: (so.n || 0) + sids.length, ids: (so.ids || []).concat(sids).slice(-400) };
+      /* Status „gesendet/erledigt“ zurücksetzen, die alte PDF im Archiv bleibt und wird markiert */
+      var war = !!(cfg.sent && cfg.sent[sk]); if (war) delete cfg.sent[sk];
+      io.saveCfg(cfg);
+      io.archivListe().filter(function (r) { return r.art === 'abt' && r.d === sdep.id && r.zeit === smon && !r.storno; }).forEach(function (r) {
+        var voll = io.archivHol(r.id); if (voll) { voll.storno = { at: sx.at, by: sx.by, grund: sx.grund }; io.archivSetze(voll); }
+      });
+      return antwort({ ent: meine(io.entries([smon])), monate: [smon], storniert: sids.length, warGesendet: war });
+    }
+    if (a === 'stornoZurueck') {
+      if (!me.r.admin) return { ok: false, error: 'Das dürfen nur Admins.' };
+      var zk = String(req.monat) + '|' + String(req.d), zr = (cfg.storno || {})[zk];
+      if (!zr) return { ok: false, error: 'Dieses Storno gibt es nicht mehr.' };
+      io.markiere(zr.ids || [], null);
+      cfg = io.cfg(); delete cfg.storno[zk]; io.saveCfg(cfg);
+      return antwort({ ent: meine(io.entries([String(req.monat)])), monate: [String(req.monat)] });
+    }
+    /* Alte PDFs, die noch lose im Hauptordner liegen, einmalig in Monatsordner einsortieren */
+    if (a === 'belegeSortieren') {
+      if (!me.r.admin) return { ok: false, error: 'Das dürfen nur Admins.' };
+      var zuo = {};
+      io.archivListe().forEach(function (r) { if (r.fid && istMonat(String(r.zeit || '').slice(0, 7))) zuo[r.fid] = String(r.zeit).slice(0, 7); });
+      var anz = io.sortiereBelege(zuo);
+      return antwort({ verschoben: anz });
     }
 
     if (a === 'loeschen') {
@@ -1480,6 +1523,8 @@ var Core = (function () {
     l: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
     r: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>',
     x: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    hoch: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15l7-7 7 7"/></svg>',
+    runter: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9l7 7 7-7"/></svg>',
     stift: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16zM13.500 6.500l4 4"/></svg>',
     weg: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>',
     rad: '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
@@ -1546,6 +1591,8 @@ var Core = (function () {
       saveCfg: function (c) { demoDb.cfg = c; sichern(); },
       entries: function (ms) { return demoDb.ent.filter(function (e) { return !ms || ms.indexOf(e.z.slice(0, 7)) >= 0; }); },
       add: function (e) { demoDb.ent.push(e); sichern(); },
+      markiere: function (ids, x) { demoDb.ent.forEach(function (e) { if (ids.indexOf(e.id) >= 0) { if (x) e.x = x; else delete e.x; } }); sichern(); },
+      sortiereBelege: function () { return 0; },
       ersetze: function (id, e) { demoDb.ent = demoDb.ent.filter(function (x) { return x.id !== id; }); demoDb.ent.push(e); sichern(); },
       del: function (ids) { demoDb.ent = demoDb.ent.filter(function (e) { return ids.indexOf(e.id) < 0; }); sichern(); },
       mail: function () {},
@@ -2609,7 +2656,7 @@ var Core = (function () {
     if (!(a.liste || []).length && !(a.alt || []).length) return '<section class="card"><p class="empty">Noch nichts verschickt. Alles, was du per Mail sendest oder als erledigt exportierst, erscheint hier mit seiner PDF.</p></section>';
     if (!liste.length && !alt.length) return '<section class="card"><p class="empty">Dazu gibt es nichts. Probier eine andere Suche oder einen anderen Monat.</p></section>';
     if (liste.length) h += '<section class="card"><div class="head"><div class="title">' + mehrzahl(liste.length, 'Abrechnung', 'Abrechnungen') + '</div></div><div class="list">' + liste.map(function (r) {
-      return '<button class="row" type="button" data-act="archivAuf" data-id="' + esc(r.id) + '"><div class="mid"><b>' + esc(r.name) + '</b><small>' + esc(archZeit(r)) + ' · ' + (r.art === 'frei' ? 'freie Abrechnung' : 'Abteilung') + ' · ' + (r.wie === 'export' ? 'exportiert' : 'gesendet') + ' am ' + esc(zeitText(r.at)) + ' · ' + esc(r.by) + '</small>' +
+      return '<button class="row" type="button" data-act="archivAuf" data-id="' + esc(r.id) + '"><div class="mid"><b>' + esc(r.name) + '</b><small>' + esc(archZeit(r)) + ' · ' + (r.art === 'frei' ? 'freie Abrechnung' : 'Abteilung') + (r.storno ? ' · STORNIERT' : '') + ' · ' + (r.wie === 'export' ? 'exportiert' : 'gesendet') + ' am ' + esc(zeitText(r.at)) + ' · ' + esc(r.by) + '</small>' +
         ((r.an || []).length ? '<small>an ' + esc(r.an.join(', ')) + '</small>' : '') + ((r.nach || []).length ? '<small>' + esc('Erneut gesendet: ' + r.nach.length + ' ×') + '</small>' : '') + '</div><span class="amt num">' + eur(r.summe) + '</span></button>';
     }).join('') + '</div></section>';
     if (alt.length) h += '<section class="card"><div class="head"><div class="title">Früher verschickt</div></div><p class="hint">Vor dem Archiv verschickt, deshalb nur als Eintrag und ohne PDF.</p><div class="list">' + alt.map(function (r) {
@@ -2659,10 +2706,12 @@ var Core = (function () {
   function vVerw(vt) {
     var h = '';
     if (vt === 'arts') {
-      h += '<section class="card"><div class="head"><div class="title">Artikel</div><button class="btn klein" data-act="artNeu">+ Artikel</button></div><div class="list">' + S.cfg.arts.map(function (a) {
+      h += '<section class="card"><div class="head"><div class="title">Artikel</div><button class="btn klein" data-act="artNeu">+ Artikel</button></div><div class="list">' + S.cfg.arts.map(function (a, i, alle) {
         var info = a.typ === 'stueck' ? 'Normaler Artikel · ' + eur(Core.cent(a.preis)) + ' je ' + esc(a.einheit || 'Stück') : 'Flasche ' + eur(Core.cent(a.preis)) + ' · ' + a.kiste + 'er-Kiste ' + eur(Core.cent(a.preis) * a.kiste) + ' · ' + esc(rabattLabel(a));
-        return '<button class="row' + (a.aktiv === false ? ' aus' : '') + '" data-act="art" data-id="' + esc(a.id) + '"><div class="mid"><b>' + esc(a.name) + '</b><small>' + info + '</small></div><span class="pf">›</span></button>';
-      }).join('') + '</div><p class="hint">Preisänderungen gelten für neue Einträge. Was schon eingetragen ist, behält den Preis von damals.</p></section>';
+        return '<div class="row' + (a.aktiv === false ? ' aus' : '') + '"><button class="rowmain" type="button" data-act="art" data-id="' + esc(a.id) + '"><div class="mid"><b>' + esc(a.name) + '</b><small>' + info + '</small></div></button>' +
+          '<button class="mini" type="button" data-act="artHoch" data-id="' + esc(a.id) + '" aria-label="Nach oben"' + (i === 0 ? ' disabled' : '') + '>' + I.hoch + '</button>' +
+          '<button class="mini" type="button" data-act="artRunter" data-id="' + esc(a.id) + '" aria-label="Nach unten"' + (i === alle.length - 1 ? ' disabled' : '') + '>' + I.runter + '</button></div>';
+      }).join('') + '</div><p class="hint">Mit den Pfeilen bestimmst du die Reihenfolge, in der die Getränke beim Eintragen erscheinen. Preisänderungen gelten für neue Einträge. Was schon eingetragen ist, behält den Preis von damals.</p></section>';
     } else if (vt === 'depts') {
       h += '<section class="card"><div class="head"><div class="title">Abteilungen</div><button class="btn klein" data-act="deptNeu">+ Abteilung</button></div><div class="list">' + S.cfg.depts.map(function (d) {
         var n = (d.mails || []).length;
@@ -2681,7 +2730,8 @@ var Core = (function () {
         '<label class="feld"><span>Hinweistext unten auf der Abrechnung</span><textarea data-f="hinweis" maxlength="300" placeholder="Bitte bis zum 15. überweisen an …">' + esc(s.hinweis || '') + '</textarea></label>' +
         '<label class="feld"><span>Kopie jeder Mail an</span><input data-f="kopie" value="' + esc((s.kopie || []).join(', ')) + '" inputmode="email" autocapitalize="off" autocomplete="off" placeholder="name@beispiel.de"></label>' +
         '<label class="sw"><span class="t">Einzelne Tage auflisten<small>Tabelle mit jedem Tag unter der Zusammenfassung</small></span><input type="checkbox" data-f="tage"' + (s.tage !== false ? ' checked' : '') + '></label>' +
-        '<button class="btn" data-act="setSpeichern" data-busy>Speichern</button></section>';
+        '<button class="btn" data-act="setSpeichern" data-busy>Speichern</button></section>' +
+        '<section class="card"><div class="title">PDFs in Google Drive</div><p class="hint">Jede verschickte Abrechnung wird in Drive im Ordner „Getränke-Abrechnung – Belege“ in einem Unterordner für ihren Monat abgelegt (zum Beispiel „2026-11“). Liegen noch ältere PDFs lose im Hauptordner, sortiert dieser Knopf sie einmal ein.</p><button class="btn hell" type="button" data-act="belegeSortieren" data-busy>Alte PDFs nach Monaten sortieren</button></section>';
     }
     return h;
   }
@@ -2700,9 +2750,21 @@ var Core = (function () {
       '<div class="feld" id="rabFeld"><span>Kistenrabatt</span><div class="seg">' + segBtn('rt', 'none', S.ed.rt, 'Keiner') + segBtn('rt', 'pct', S.ed.rt, 'Prozent') + segBtn('rt', 'abs', S.ed.rt, 'Abzug') + segBtn('rt', 'fix', S.ed.rt, 'Festpreis') + '</div></div>' +
       '<label class="feld" id="rvFeld"><span id="rvLabel"></span><input data-f="rv" data-in="artRechnen" value="' + (atyp === 'stueck' ? '10' : a.rt === 'pct' ? String(a.rv).replace('.', ',') : euroFeld(a.rv || 0)) + '" inputmode="decimal"></label>' +
       '<div class="msg ok" id="artInfo"></div>' +
+      '<label class="feld"><span>Platz in der Liste beim Eintragen</span><select data-f="pos">' + posOptionen(id) + '</select></label>' +
       '<label class="sw"><span class="t">Aktiv<small>Ausgeschaltete Artikel stehen nicht mehr zur Auswahl</small></span><input type="checkbox" data-f="aktiv"' + (a.aktiv !== false ? ' checked' : '') + '></label>' +
       '<div class="reihe">' + (id ? '<button class="btn rot" data-act="artWeg" data-busy>Löschen</button>' : '') + '<button class="btn" data-act="artSpeichern" data-busy>Speichern</button></div>');
     artRechnen();
+  }
+  function posOptionen(id) {
+    var n = S.cfg.arts.length + (id ? 0 : 1), cur = id ? S.cfg.arts.map(function (a) { return a.id; }).indexOf(id) + 1 : n, o = '';
+    for (var i = 1; i <= n; i++) o += '<option value="' + i + '"' + (i === cur ? ' selected' : '') + '>' + (i === 1 ? '1 (ganz oben)' : i === n ? i + ' (ganz unten)' : i) + '</option>';
+    return o;
+  }
+  function artSchieben(id, n) {
+    var list = S.cfg.arts.slice(), i = list.map(function (a) { return a.id; }).indexOf(id), j = i + n;
+    if (i < 0 || j < 0 || j >= list.length) return;
+    var t = list[i]; list[i] = list[j]; list[j] = t;
+    tu(api('arts', { data: list })).then(function () { render(); }, function () {});
   }
   function feldZahl(sel) { var el = $('#sheet [data-f="' + sel + '"]'); return el ? Number(String(el.value).replace(',', '.').replace(/[^\d.]/g, '')) || 0 : 0; }
   function artRechnen() {
@@ -2726,8 +2788,21 @@ var Core = (function () {
       '<label class="feld"><span>E-Mail-Adressen für die Abrechnung</span><textarea data-f="mails" inputmode="email" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="Eine Adresse pro Zeile">' + esc((d.mails || []).join('\n')) + '</textarea></label>' +
       '<div class="feld" id="leuteFeld"><span>Personen</span>' + leuteEditor(d.leute || []) + '</div>' +
       '<label class="sw"><span class="t">Aktiv<small>Ausgeschaltete Abteilungen stehen nicht mehr zur Auswahl</small></span><input type="checkbox" data-f="aktiv"' + (d.aktiv !== false ? ' checked' : '') + '></label>' +
+      (id && rechte().admin ? stornoBereich(id) : '') +
       '<div class="reihe">' + (id ? '<button class="btn rot" data-act="deptWeg" data-busy>Löschen</button>' : '') + '<button class="btn" data-act="deptSpeichern" data-busy>Speichern</button></div>');
     deptModus();
+  }
+  /* Monat einer Abteilung stornieren (nur Admin) */
+  function stornoBereich(did) {
+    var m0 = S.abr || heute().slice(0, 7), opt = '';
+    for (var i = 0; i < 12; i++) { var m = schiebeMonat(heute().slice(0, 7), -i); opt += '<option value="' + m + '"' + (m === m0 ? ' selected' : '') + '>' + esc(monatText(m)) + '</option>'; }
+    var st = S.cfg.storno || {}, liste = Object.keys(st).filter(function (k) { return k.split('|')[1] === did; }).sort().reverse().map(function (k) {
+      var r = st[k], m = k.split('|')[0];
+      return '<div class="row"><div class="mid"><b>' + esc(monatText(m)) + ' · ' + mehrzahl(r.n || 0, 'Eintrag', 'Einträge') + '</b><small>Storniert am ' + esc(zeitText(r.at)) + ' von ' + esc(r.by || '') + (r.grund ? ' · ' + esc(r.grund) : '') + '</small></div><button class="btn hell klein" type="button" data-act="stornoZurueck" data-m="' + m + '" data-busy>Rückgängig</button></div>';
+    }).join('');
+    return '<div class="feld stbox"><span>Monat stornieren</span><p class="hint">Alle Einträge dieser Abteilung im gewählten Monat zählen danach nicht mehr: nicht in der Abrechnung, nicht in der Statistik. Sie bleiben in der Google-Tabelle als „STORNIERT“ erhalten. Eine schon verschickte Abrechnung wird wieder offen und im Archiv als storniert markiert.</p>' +
+      '<div class="zwei"><label class="feld"><span>Monat</span><select id="stMon">' + opt + '</select></label><label class="feld"><span>Grund (optional)</span><input id="stGrund" maxlength="120" autocomplete="off" placeholder="z. B. Turnier abgesagt"></label></div>' +
+      '<button class="btn rot" type="button" data-act="stornoGo" data-busy>Monat stornieren</button>' + (liste ? '<div class="list" style="margin-top:12px">' + liste + '</div>' : '') + '</div>';
   }
   function deptModus() {
     $('#leuteFeld').hidden = S.ed.modus !== 'person';
@@ -3031,8 +3106,24 @@ var Core = (function () {
       if (st && conn && S.skript < 7) { sheetSkriptAlt('Dein Google-Skript ist älter als die App und kennt normale Artikel noch nicht.'); return; }
       var neu = { id: S.ed.id || undefined, name: name, sorten: feld('sorten'), preis: feldZahl('preis'), typ: st ? 'stueck' : 'kiste', einheit: st ? (feld('einheit') || 'Stück') : '', kiste: st ? 0 : (Math.round(feldZahl('kiste')) || 1), rt: st ? 'none' : S.ed.rt, rv: st ? 0 : feldZahl('rv'), aktiv: feld('aktiv') };
       var list = S.cfg.arts.map(function (a) { return a.id === S.ed.id ? neu : a; }); if (!S.ed.id) list.push(neu);
+      var pos = Math.max(1, Math.min(list.length, Math.round(Number(feld('pos'))) || list.length));
+      list.splice(list.indexOf(neu), 1); list.splice(pos - 1, 0, neu);
       tu(api('arts', { data: list })).then(function () { schliesse(); render(); feier('Gespeichert', name); }, function () {});
     },
+    stornoGo: function (b) {
+      if (!b.classList.contains('scharf')) { b.classList.add('scharf'); b.textContent = 'Wirklich stornieren?'; setTimeout(function () { if (b.isConnected) { b.classList.remove('scharf'); b.textContent = 'Monat stornieren'; } }, 4000); return; }
+      var m = $('#stMon').value, d = S.ed.id, dn = (Core.finde(S.cfg.depts, d) || {}).name || '';
+      tu(api('stornieren', { d: d, monat: m, grund: $('#stGrund').value.trim() })).then(function (r) { schliesse(); render(); feier('Storniert', dn + ' · ' + monatText(m) + ' · ' + mehrzahl(r.storniert, 'Eintrag', 'Einträge')); }, function () {});
+    },
+    stornoZurueck: function (b) {
+      var d = S.ed.id;
+      tu(api('stornoZurueck', { d: d, monat: b.getAttribute('data-m') }), 'Wieder da').then(function () { schliesse(); render(); }, function () {});
+    },
+    belegeSortieren: function () {
+      tu(api('belegeSortieren', {})).then(function (r) { toast(r.verschoben ? mehrzahl(r.verschoben, 'Datei', 'Dateien') + ' in Monatsordner einsortiert.' : 'Es lag nichts Loses im Hauptordner.'); }, function () {});
+    },
+    artHoch: function (b) { artSchieben(b.getAttribute('data-id'), -1); },
+    artRunter: function (b) { artSchieben(b.getAttribute('data-id'), 1); },
     artWeg: function (b) {
       if (!b.classList.contains('scharf')) { b.classList.add('scharf'); b.textContent = 'Wirklich löschen?'; return; }
       tu(api('arts', { data: S.cfg.arts.filter(function (a) { return a.id !== S.ed.id; }) }), 'Gelöscht').then(function () { schliesse(); render(); }, function () {});
