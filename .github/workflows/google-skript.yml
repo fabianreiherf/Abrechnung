@@ -24,7 +24,7 @@ jobs:
         run: |
           printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
           mkdir -p /tmp/skript && cd /tmp/skript
-          printf '{"scriptId":"%s","rootDir":"","fileExtension":"gs"}' "$SCRIPT_ID" > .clasp.json
+          printf '{"scriptId":"%s","fileExtension":"gs"}' "$SCRIPT_ID" > .clasp.json
           clasp pull
       - name: Code.gs einspielen und neue Version bereitstellen
         env:
