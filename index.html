@@ -525,6 +525,9 @@ a.btn { text-decoration: none; }
 .feld select { width: 100%; border: 1.5px solid var(--line); border-radius: 12px; padding: 11px 12px; font: inherit; font-size: 1rem; background: var(--field); color: var(--fg); }
 .stbox { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
 
+.row.warn small { color: var(--warn); }
+.erinn.frg { display: block; }
+.erinn.frg .title { margin-bottom: 6px; }
 </style>
 </head>
 <body>
@@ -1032,15 +1035,15 @@ var Core = (function () {
   function rechte(r) {
     r = r || {};
     var ein = r.ein === true ? true : (Array.isArray(r.ein) ? r.ein.map(function (x) { return str(x, 40); }) : []);
-    return { ein: ein, abr: !!r.abr, verw: !!r.verw, admin: !!r.admin };
+    return { ein: ein, abr: !!r.abr, verw: !!r.verw, admin: !!r.admin, frei: !!r.frei };
   }
   function erstesWort(n) { return String(n || '').trim().split(/\s+/)[0] || ''; }
   function werBin(cfg, key, adminKey) {
     if (!key) return null;
-    if (adminKey && key === adminKey) return { id: 'admin', name: cfg.set.admin || 'Admin', hallo: erstesWort(cfg.set.admin || ''), r: { ein: true, abr: true, verw: true, admin: true }, haupt: true };
+    if (adminKey && key === adminKey) return { id: 'admin', name: cfg.set.admin || 'Admin', hallo: erstesWort(cfg.set.admin || ''), r: { ein: true, abr: true, verw: true, admin: true, frei: true }, haupt: true };
     for (var i = 0; i < cfg.pers.length; i++) {
       var p = cfg.pers[i];
-      if (p.tok === key && !p.gesperrt) { var r = rechte(p.r); if (r.admin) { r.ein = true; r.abr = true; r.verw = true; } return { id: p.id, name: p.name, hallo: p.hallo || erstesWort(p.name), r: r }; }
+      if (p.tok === key && !p.gesperrt) { var r = rechte(p.r); if (r.admin) { r.ein = true; r.abr = true; r.verw = true; r.frei = true; } return { id: p.id, name: p.name, hallo: p.hallo || erstesWort(p.name), r: r }; }
     }
     return null;
   }
@@ -1062,6 +1065,9 @@ var Core = (function () {
       return { id: d.id, name: d.name, modus: d.modus, rabatt: !!d.rabatt, aktiv: d.aktiv !== false, leute: nachSort(d.leute), mails: voll ? (d.mails || []) : [] };
     });
     if (me.r.admin) { out.storno = cfg.storno || {}; out.pers = nachSort(cfg.pers); out.set.admin = cfg.set.admin; out.set.kopie = cfg.set.kopie || []; }
+    if (me.r.admin) out.set.freiMail = cfg.set.freiMail || [];
+    /* Entwürfe für freie Abrechnungen: Admins und „Abrechnen“ sehen alle, andere nur ihre eigenen */
+    out.freiEntw = (cfg.freiEntw || []).filter(function (x) { return voll || x.byId === me.id; });
     return out;
   }
 
@@ -1176,7 +1182,7 @@ var Core = (function () {
   /* ---------- Anfragen bearbeiten ----------
      io: { adminKey, cfg(), saveCfg(c), entries(monate|null), add(e), del(ids), mail(o), now(), id(),
            ablegen(o) → { fid, url }, archivAdd(rec), archivListe(), archivHol(id), archivSetze(rec), altVersand() } */
-  var APP = 'sve-getraenke-abrechnung', VERSION = 15;
+  var APP = 'sve-getraenke-abrechnung', VERSION = 16;
   /* Jede Antwort trägt die Kennung, damit die App merkt, wenn sie mit einem anderen Skript verbunden ist */
   function handle(req, io) { var r = bearbeite(req, io); r.app = APP; r.v = VERSION; return r; }
   function bearbeite(req, io) {
@@ -1360,7 +1366,7 @@ var Core = (function () {
       if (!me.r.admin) return { ok: false, error: 'Das darf nur ein Admin.' };
       var s = req.data || {};
       var pwAlt = cfg.set.pw;
-      cfg.set = { admin: str(s.admin, 40) || cfg.set.admin || 'Admin', hinweis: str(s.hinweis, 300), kopie: mailsVon(s.kopie), tage: s.tage !== false };
+      cfg.set = { admin: str(s.admin, 40) || cfg.set.admin || 'Admin', hinweis: str(s.hinweis, 300), kopie: mailsVon(s.kopie), tage: s.tage !== false, freiMail: mailsVon(s.freiMail) };
       if (pwAlt) cfg.set.pw = pwAlt;
       io.saveCfg(cfg); me = werBin(cfg, req.k, io.adminKey);
       return antwort({});
@@ -1422,6 +1428,59 @@ var Core = (function () {
       return antwort({ gesendet: an, hinweis: ab.fehler || '' });
     }
 
+    /* ---------- Entwürfe für freie Abrechnungen (Personen mit dem Recht „Freie Abrechnung erstellen“) ---------- */
+    function pruefeEntwurf(rq) {
+      var n = str(rq.name, 60);
+      if (!n) return { fehler: 'Bitte oben eintragen, für wen die Abrechnung ist.' };
+      if (!istTag(rq.z)) return { fehler: 'Datum fehlt.' };
+      var bb = freiBeleg(cfg, { name: n, z: rq.z, rab: rq.rab, it: rq.it });
+      if (bb.leer) return { fehler: 'Bitte mindestens eine Menge eintragen.' };
+      return { name: n, z: rq.z, rab: rq.rab !== false, it: (Array.isArray(rq.it) ? rq.it : []).map(function (i) { return { a: str(i && i.a, 40), k: ganz(i && i.k, 999), f: ganz(i && i.f, 9999) }; }), summe: bb.summe };
+    }
+    function entwurfFinden(id) { var l = cfg.freiEntw || []; for (var i = 0; i < l.length; i++) if (l[i].id === id) return l[i]; return null; }
+    function darfEntwurf(x) { return me.r.admin || me.r.abr || x.byId === me.id; }
+
+    if (a === 'freiEntwurf') {
+      if (!(me.r.admin || me.r.abr || me.r.frei)) return { ok: false, error: 'Dafür fehlt dir das Recht „Freie Abrechnung erstellen“.' };
+      var pe = pruefeEntwurf(req);
+      if (pe.fehler) return { ok: false, error: pe.fehler };
+      cfg.freiEntw = cfg.freiEntw || [];
+      var eid = /^[a-z0-9]{8,40}$/i.test(String(req.id || '')) ? String(req.id) : io.id();
+      var en = entwurfFinden(eid);
+      if (en && !darfEntwurf(en)) return { ok: false, error: 'Das ist der Entwurf von jemand anderem.' };
+      var neu = !en;
+      if (!en) { en = { id: eid, by: me.name, byId: me.id, at: io.now() }; cfg.freiEntw.push(en); }
+      en.name = pe.name; en.z = pe.z; en.rab = pe.rab; en.it = pe.it; en.summe = pe.summe; en.ch = io.now();
+      en.status = 'offen'; delete en.grund;
+      if (cfg.freiEntw.length > 200) cfg.freiEntw = cfg.freiEntw.slice(-200);
+      io.saveCfg(cfg);
+      /* Admins benachrichtigen, aber nur bei neuen oder wieder eingereichten Entwürfen von Personen ohne Abrechnen-Recht */
+      var fm = cfg.set.freiMail || [], hin = '';
+      if (fm.length && !(me.r.admin || me.r.abr)) {
+        try { io.hinweisMail({ an: fm, betreff: 'Freie Abrechnung zur Freigabe: ' + pe.name, text: me.name + ' hat eine freie Abrechnung „' + pe.name + '“ (' + (pe.summe / 100).toFixed(2).replace('.', ',') + ' €) erstellt.\n\nSie wartet in der App auf deine Bestätigung: öffne die App, dort erscheint oben ein Hinweis. Erst nach deiner Freigabe wird sie versendet.' }); }
+        catch (err) { hin = 'Die Hinweis-Mail an die Admins konnte nicht verschickt werden.'; }
+      }
+      return antwort({ entwurf: en.id, neu: neu, hinweis: hin });
+    }
+
+    if (a === 'freiEntwurfWeg') {
+      var wx = entwurfFinden(String(req.id || ''));
+      if (!wx) return antwort({});
+      if (!darfEntwurf(wx)) return { ok: false, error: 'Das ist der Entwurf von jemand anderem.' };
+      cfg.freiEntw = cfg.freiEntw.filter(function (x) { return x.id !== wx.id; });
+      io.saveCfg(cfg);
+      return antwort({});
+    }
+
+    if (a === 'freiZurueck') {
+      if (!(me.r.admin || me.r.abr)) return { ok: false, error: 'Dafür fehlt dir das Recht „Abrechnen“.' };
+      var zx = entwurfFinden(String(req.id || ''));
+      if (!zx) return { ok: false, error: 'Diesen Entwurf gibt es nicht mehr.' };
+      zx.status = 'zurueck'; zx.grund = str(req.grund, 200); zx.von = me.name;
+      io.saveCfg(cfg);
+      return antwort({});
+    }
+
     /* ---------- Freie Abrechnung: per Mail senden oder exportiert ablegen ---------- */
     if (a === 'frei') {
       if (!(me.r.admin || me.r.abr)) return { ok: false, error: 'Dafür fehlt dir das Recht „Abrechnen“.' };
@@ -1435,6 +1494,7 @@ var Core = (function () {
       if (fb.leer) return { ok: false, error: 'Bitte mindestens eine Menge eintragen.' };
       fb.erstellt = erstellt(req); delete fb.items;
       if (!req.pdf || String(req.pdf).length > 6000000) return { ok: false, error: 'Die PDF fehlt oder ist zu groß.' };
+      var entwurfVon = ''; if (req.entwurf) { var ee = entwurfFinden(String(req.entwurf)); if (ee) entwurfVon = ee.by; }
       var fan = [], fkopie = [], fdatei = dateiOk(req.datei);
       if (fwie === 'mail') {
         fan = mailsVon(req.an);
@@ -1446,7 +1506,8 @@ var Core = (function () {
         io.mail({ an: fkopie, kopie: [], betreff: str(req.betreff, 150), text: String(req.text || '').slice(0, 4000), pdf: String(req.pdf), datei: fdatei });
       }
       var fab = ablegen(req.pdf, fdatei, req.z.slice(0, 7));
-      var frec = archiviere({ id: fid, art: 'frei', name: fname, zeit: req.z, summe: fb.summe, an: fan, kopie: fkopie, wie: fwie, datei: fdatei, beleg: fb, betreff: str(req.betreff, 150) }, fab);
+      if (req.entwurf && cfg.freiEntw) { cfg.freiEntw = cfg.freiEntw.filter(function (x) { return x.id !== String(req.entwurf); }); io.saveCfg(cfg); }
+      var frec = archiviere({ id: fid, art: 'frei', name: fname, von: (entwurfVon || ''), zeit: req.z, summe: fb.summe, an: fan, kopie: fkopie, wie: fwie, datei: fdatei, beleg: fb, betreff: str(req.betreff, 150) }, fab);
       return antwort({ archiv: leicht(frec), hinweis: fab.fehler || '' });
     }
 
@@ -1596,6 +1657,7 @@ var Core = (function () {
       ersetze: function (id, e) { demoDb.ent = demoDb.ent.filter(function (x) { return x.id !== id; }); demoDb.ent.push(e); sichern(); },
       del: function (ids) { demoDb.ent = demoDb.ent.filter(function (e) { return ids.indexOf(e.id) < 0; }); sichern(); },
       mail: function () {},
+      hinweisMail: function () {},
       ablegen: function () { return {}; },
       archivAdd: function (r) { demoDb.archiv = demoDb.archiv || []; demoDb.archiv.push(JSON.parse(JSON.stringify(r))); sichern(); },
       archivListe: function () { return (demoDb.archiv || []).slice().sort(function (a, b) { return a.at < b.at ? 1 : -1; }).map(function (r) { var o = JSON.parse(JSON.stringify(r)); o.beleg = r.beleg ? 1 : 0; return o; }); },
@@ -1785,7 +1847,7 @@ var Core = (function () {
   });
 
   /* ---------- Aufbau ---------- */
-  function rechte() { var r = (S.me && S.me.r) || {}, adm = !!r.admin; return { ein: S.me ? Core.darfIrgendEin(S.me) : false, abr: adm, verw: adm, admin: adm }; }
+  function rechte() { var r = (S.me && S.me.r) || {}, adm = !!r.admin; return { ein: S.me ? Core.darfIrgendEin(S.me) : false, abr: adm, verw: adm, admin: adm, frei: adm || !!r.frei }; }
   /* Seiten: start → dept (Eintragen) oder → admin (Zahnrad, nur für Admins) → abr / arts / depts / pers / set */
   var TITEL = { admin: 'Einstellungen', stat: 'Statistik', frei: 'Freie Abrechnung', archiv: 'Versendete Abrechnungen', abr: 'Abrechnung', arts: 'Artikel und Preise', depts: 'Abteilungen', pers: 'Personen und Rechte', set: 'Sonstiges' };
   var BRAUCHT = { abr: 'abr', archiv: 'abr', stat: 'abr', arts: 'verw', depts: 'verw', pers: 'admin', set: 'admin' };
@@ -1816,7 +1878,7 @@ var Core = (function () {
     if (!S.cfg) { $('#demo').hidden = true; setzKopf('marke', marke(false)); S.letzter = null; view.innerHTML = S.startFehler ? '<section class="card"><div class="title">Keine Verbindung</div><p class="hint">' + esc(S.startFehler) + '</p><button class="btn" data-act="neuLaden">Noch einmal versuchen</button></section>' : '<p class="note">Lade …</p>'; return; }
     var r = rechte(), sc = S.screen;
     if (sc !== 'start' && sc !== 'dept' && sc !== 'frei' && !S.offen) sc = 'start';
-    if (sc === 'frei' && !r.abr) sc = 'start';
+    if (sc === 'frei' && !r.frei) sc = 'start';
     if (BRAUCHT[sc] && !r[BRAUCHT[sc]]) sc = 'admin';
     if (sc === 'admin' && !(r.abr || r.verw || r.admin)) sc = 'start';
     if (sc === 'dept' && !aktDept()) sc = 'start';
@@ -1893,11 +1955,34 @@ var Core = (function () {
   }
   function vStart() {
     var depts = meineDepts(), r = rechte();
-    if (!depts.length && !r.abr) return hallo() + '<section class="card"><p class="empty">' + 'Für dich ist hier noch nichts freigegeben. Frag den Admin.' + '</p></section>';
-    var fd = r.abr ? frEntwurf() : null;
-    return hallo() + erinnerung() + '<p class="frage">Für wen trägst du ein?</p><div class="kacheln">' + depts.map(function (d, i) {
+    if (!depts.length && !r.frei) return hallo() + '<section class="card"><p class="empty">' + 'Für dich ist hier noch nichts freigegeben. Frag den Admin.' + '</p></section>';
+    var fd = r.frei ? frEntwurf() : null;
+    return hallo() + erinnerung() + freigabeKarte() + (depts.length ? '<p class="frage">Für wen trägst du ein?</p>' : '') + '<div class="kacheln">' + depts.map(function (d, i) {
       return '<button class="kachel" type="button" style="--i:' + i + '" data-act="oeffne" data-id="' + esc(d.id) + '"><span class="kt"><b>' + esc(d.name) + '</b></span>' + I.r + '</button>';
-    }).join('') + (r.abr ? '<button class="kachel frei" type="button" style="--i:' + depts.length + '" data-act="freiAuf"><span class="kt"><b>+ Freie Abrechnung</b><small>' + (fd ? 'Entwurf: ' + esc(fd.name.trim() || 'ohne Namen') : 'Eigener Name, sofort senden oder exportieren') + '</small></span>' + I.r + '</button>' : '') + '</div>';
+    }).join('') + (r.frei ? '<button class="kachel frei" type="button" style="--i:' + depts.length + '" data-act="freiAuf"><span class="kt"><b>+ Freie Abrechnung</b><small>' + (fd ? 'Entwurf: ' + esc(fd.name.trim() || 'ohne Namen') : r.admin ? 'Eigener Name, sofort senden oder exportieren' : 'Du speicherst sie, ein Admin sendet sie') + '</small></span>' + I.r + '</button>' : '') + '</div>' + meineEntwuerfe();
+  }
+  /* ---- Freie Abrechnungen von Personen: Entwürfe ---- */
+  function entwuerfe() { return (S.cfg && S.cfg.freiEntw) || []; }
+  function entwText(e) { return e.status === 'zurueck' ? 'Zurückgegeben' + (e.grund ? ': ' + e.grund : '') + (e.von ? ' (' + e.von + ')' : '') : 'Wartet auf Freigabe'; }
+  /* Admin: was wartet auf Freigabe */
+  function freigabeKarte() {
+    var r = rechte(); if (!r.admin) return '';
+    var l = entwuerfe().filter(function (e) { return e.status !== 'zurueck'; }); if (!l.length) return '';
+    return '<section class="card erinn frg"><div class="title">' + (l.length === 1 ? 'Eine freie Abrechnung wartet' : l.length + ' freie Abrechnungen warten') + ' auf deine Freigabe</div><div class="list">' + l.map(function (e) {
+      return '<button class="row" type="button" data-act="frPruef" data-id="' + esc(e.id) + '"><div class="mid"><b>' + esc(e.name) + '</b><small>von ' + esc(e.by) + ' · ' + esc(tagText(e.z)) + '</small></div><span class="amt num">' + eur(e.summe || 0) + '</span></button>';
+    }).join('') + '</div></section>';
+  }
+  /* Person: eigene Entwürfe */
+  function meineEntwuerfe() {
+    var r = rechte(); if (r.admin || !r.frei) return '';
+    var l = entwuerfe(); if (!l.length) return '';
+    return '<section class="card"><div class="title">Meine Entwürfe</div><div class="list">' + l.map(function (e) {
+      return '<div class="row' + (e.status === 'zurueck' ? ' warn' : '') + '"><button class="rowmain" type="button" data-act="frEntwOeffne" data-id="' + esc(e.id) + '"><div class="mid"><b>' + esc(e.name) + '</b><small>' + esc(tagText(e.z)) + ' · ' + esc(entwText(e)) + '</small></div><span class="amt num">' + eur(e.summe || 0) + '</span></button><button class="mini" type="button" data-act="frEntwWeg" data-id="' + esc(e.id) + '" aria-label="Entwurf löschen">' + I.weg + '</button></div>';
+    }).join('') + '</div></section>';
+  }
+  function frAusEntwurf(e) {
+    var q = {}; (e.it || []).forEach(function (i) { q[i.a] = { k: i.k || 0, f: i.f || 0 }; });
+    return { id: e.id, name: e.name, z: e.z, rab: e.rab !== false, q: q, an: '', entw: e.id, entwVon: e.by };
   }
   function vDept() { var d = aktDept(); return d.modus === 'person' ? vEinPerson(d) : vEinTag(d); }
   function vAdmin() {
@@ -2447,9 +2532,11 @@ var Core = (function () {
     h += '<div class="gks">' + aktArts().map(function (a, i) { return artKarte('f', a, i, f.q[a.id] || {}, true, f.rab); }).join('') + '</div>';
     h += '<div class="bar gross" id="bar"><div class="txt"><small id="sumS"></small><b class="num" id="sumB">0,00 €</b></div><button class="btn" data-act="frWeiter" type="button">Weiter<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M6 13l6 6 6-6"/></svg></button></div>';
     h += '<section class="card frende" id="frEnde"><div class="title">Abschließen</div>' +
-      '<label class="feld"><span>E-Mail-Adresse (nur zum Senden nötig)</span><input id="frMail" data-in="frMail" type="email" inputmode="email" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="name@beispiel.de" value="' + esc(f.an) + '"></label>' +
+      (rechte().admin ? '<label class="feld"><span>E-Mail-Adresse (nur zum Senden nötig)</span><input id="frMail" data-in="frMail" type="email" inputmode="email" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="name@beispiel.de" value="' + esc(f.an) + '"></label>' +
       '<div class="reihe"><button class="btn hell" type="button" data-act="frAnsehen" data-fr>Ansehen</button><button class="btn hell" type="button" data-act="frExport" data-fr>Exportieren</button><button class="btn" type="button" data-act="frSenden" data-fr>Senden</button></div>' +
-      '<p class="hint">Nach dem Senden steht alles wieder auf Null. Beim Exportieren fragt dich die App danach, ob sie leeren soll.</p>' +
+      '<p class="hint">Nach dem Senden steht alles wieder auf Null. Beim Exportieren fragt dich die App danach, ob sie leeren soll.</p>'
+      : '<p class="hint">Du kannst die Abrechnung nur speichern. Ein Admin bekommt Bescheid, prüft sie und sendet sie ab.</p><div class="reihe"><button class="btn hell" type="button" data-act="frAnsehen" data-fr>Ansehen</button><button class="btn" type="button" data-act="frEntwSpeichern" data-fr data-busy>Speichern und melden</button></div>') +
+      (f.entw && rechte().admin ? '<p class="hint">Das ist ein Entwurf von ' + esc(f.entwVon || '') + '. Nach dem Senden ist er erledigt.</p>' : '') +
       '<button class="btn rot klein" type="button" data-act="frLeeren">Alles zurücksetzen</button></section>';
     return h;
   }
@@ -2488,13 +2575,14 @@ var Core = (function () {
     if (conn && S.skript && S.skript < 10) { sheetSkriptAlt('Dein Google-Skript ist älter als die App und kennt die neue Regel für den Kistenrabatt noch nicht (Flaschen zählen über den Monat zusammen). Bitte zuerst aktualisieren, sonst stimmt das gespeicherte PDF im Archiv nicht mit dem gesendeten überein.'); return true; }
     return false;
   }
+  function entwSkriptAlt() { if (conn && S.skript && S.skript < 16) { sheetSkriptAlt('Dein Google-Skript ist älter als die App (Stand ' + S.skript + ') und kennt die Entwürfe für freie Abrechnungen noch nicht. Bitte zuerst das Skript aktualisieren.'); return true; } return false; }
   function frSkriptAlt() {
     if (conn && S.skript && S.skript < 9) { sheetSkriptAlt('Dein Google-Skript ist älter als die App und kennt die freie Abrechnung und das Archiv noch nicht.'); return true; }
     return false;
   }
   function frReq(b, wie, mails, pdf) {
     var f = fr();
-    return { id: f.id, name: f.name.trim(), z: f.z, rab: f.rab, it: frItems(), an: mails.join(', '), wie: wie, pdf: pdf, datei: dateiName(b), betreff: mailBetreff(b), text: mailText(b), erstellt: { am: heute() }, summe: b.summe };
+    return { id: f.id, name: f.name.trim(), z: f.z, rab: f.rab, it: frItems(), an: mails.join(', '), wie: wie, pdf: pdf, datei: dateiName(b), betreff: mailBetreff(b), text: mailText(b), erstellt: { am: heute() }, summe: b.summe, entwurf: f.entw || undefined };
   }
   function pdfBase64(b) { return NUR_VORSCHAU ? 'VORSCHAU' : pdfBeleg(b).output('datauristring').split(',')[1]; }
   function frNeu() { S.fr = frLeer(); LS.del('frei'); render(); }
@@ -2676,7 +2764,7 @@ var Core = (function () {
   }
   function sheetArchivDetail(r) {
     var b = r.beleg, S2 = S.arch; S2.cur = r;
-    var hint = esc(archZeit(r)) + ' · ' + (r.art === 'frei' ? 'freie Abrechnung' : 'Abteilung') + ' · <b>' + eur(r.summe) + '</b><br>' + (r.wie === 'export' ? 'Exportiert' : 'Gesendet') + ' am ' + esc(zeitText(r.at)) + ' von ' + esc(r.by) + ((r.an || []).length ? '<br>An ' + esc(r.an.join(', ')) : '') +
+    var hint = esc(archZeit(r)) + ' · ' + (r.art === 'frei' ? 'freie Abrechnung' : 'Abteilung') + ' · <b>' + eur(r.summe) + '</b><br>' + (r.wie === 'export' ? 'Exportiert' : 'Gesendet') + ' am ' + esc(zeitText(r.at)) + ' von ' + esc(r.by) + (r.von ? ' · erstellt von ' + esc(r.von) : '') + ((r.an || []).length ? '<br>An ' + esc(r.an.join(', ')) : '') +
       (r.nach || []).map(function (n) { return '<br>Erneut gesendet am ' + esc(zeitText(n.at)) + ' an ' + esc((n.an || []).join(', ')); }).join('');
     var knoepfe = (b && !NUR_VORSCHAU ? '<button class="btn hell" type="button" data-act="archivPdf">PDF teilen</button>' : '') + (r.url ? '<a class="btn hell" href="' + esc(r.url) + '" target="_blank" rel="noopener">In Google Drive öffnen</a>' : '') + '<button class="btn" type="button" data-act="archivNochmalSenden">Erneut senden</button>';
     if (b) sheetBeleg(r.name, hint, b, knoepfe);
@@ -2701,6 +2789,7 @@ var Core = (function () {
     var r = p.r || {}; if (r.admin) return 'Admin';
     var t = [];
     if (r.ein === true) t.push('Eintragen: alle'); else if (r.ein && r.ein.length) t.push('Eintragen: ' + r.ein.map(function (id) { var d = Core.finde(S.cfg.depts, id); return d ? d.name : id; }).join(', '));
+    if (r.frei) t.push('Freie Abrechnung (Entwurf)');
     return t.length ? t.join(' · ') : 'darf noch nirgends eintragen';
   }
   function vVerw(vt) {
@@ -2729,6 +2818,7 @@ var Core = (function () {
         '<label class="feld"><span>Dein Name (steht bei „Eintrag von“)</span><input data-f="admin" value="' + esc(s.admin || '') + '" maxlength="40" autocomplete="off"></label>' +
         '<label class="feld"><span>Hinweistext unten auf der Abrechnung</span><textarea data-f="hinweis" maxlength="300" placeholder="Bitte bis zum 15. überweisen an …">' + esc(s.hinweis || '') + '</textarea></label>' +
         '<label class="feld"><span>Kopie jeder Mail an</span><input data-f="kopie" value="' + esc((s.kopie || []).join(', ')) + '" inputmode="email" autocapitalize="off" autocomplete="off" placeholder="name@beispiel.de"></label>' +
+        '<label class="feld"><span>Hinweis bei freien Abrechnungen von Personen an</span><input data-f="freiMail" value="' + esc((s.freiMail || []).join(', ')) + '" inputmode="email" autocapitalize="off" autocomplete="off" placeholder="name@beispiel.de, zweite@beispiel.de"><small class="hint">Mehrere Adressen mit Komma trennen. Dorthin geht eine kurze Mail, sobald eine Person mit dem Recht „Freie Abrechnung erstellen“ eine Abrechnung gespeichert hat.</small></label>' +
         '<label class="sw"><span class="t">Einzelne Tage auflisten<small>Tabelle mit jedem Tag unter der Zusammenfassung</small></span><input type="checkbox" data-f="tage"' + (s.tage !== false ? ' checked' : '') + '></label>' +
         '<button class="btn" data-act="setSpeichern" data-busy>Speichern</button></section>' +
         '<section class="card"><div class="title">PDFs in Google Drive</div><p class="hint">Jede verschickte Abrechnung wird in Drive im Ordner „Getränke-Abrechnung – Belege“ in einem Unterordner für ihren Monat abgelegt (zum Beispiel „2026-11“). Liegen noch ältere PDFs lose im Hauptordner, sortiert dieser Knopf sie einmal ein.</p><button class="btn hell" type="button" data-act="belegeSortieren" data-busy>Alte PDFs nach Monaten sortieren</button></section>';
@@ -2821,11 +2911,12 @@ var Core = (function () {
       '<div id="persRechte"><p class="hint">Ohne Admin darf die Person nur eintragen, in den Abteilungen, die du hier freigibst. Das Zahnrad sieht sie nicht.</p><div class="feld"><span>Eintragen</span><div class="seg">' + segBtn('ein', 'nein', einArt, 'Nein') + segBtn('ein', 'alle', einArt, 'Alle Abteilungen') + segBtn('ein', 'wahl', einArt, 'Auswahl') + '</div></div>' +
       '<div id="einWahl">' + S.cfg.depts.map(function (d) { return '<label class="sw"><span class="t">' + esc(d.name) + '</span><input type="checkbox" data-dept="' + esc(d.id) + '"' + (Array.isArray(r.ein) && r.ein.indexOf(d.id) >= 0 ? ' checked' : '') + '></label>'; }).join('') + '</div>' +
       '</div>' +
+      '<label class="sw" id="persFrei"><span class="t">Freie Abrechnung erstellen<small>Darf sie nur als Entwurf speichern. Ein Admin sendet sie.</small></span><input type="checkbox" data-f="frei"' + (r.frei ? ' checked' : '') + '></label>' +
       (id ? '<label class="sw"><span class="t">Gesperrt<small>Der Link funktioniert nicht mehr, die Person bleibt in der Liste</small></span><input type="checkbox" data-f="gesperrt"' + (p.gesperrt ? ' checked' : '') + '></label>' : '') +
       '<div class="reihe">' + (id ? '<button class="btn rot" data-act="persWeg" data-busy>Löschen</button>' : '') + '<button class="btn" data-act="persSpeichern" data-busy>' + (id ? 'Speichern' : 'Speichern und Link zeigen') + '</button></div>');
     persUi();
   }
-  function persUi() { var adm = $('#sheet [data-f="admin"]').checked; $('#persRechte').hidden = adm; $('#einWahl').hidden = S.ed.ein !== 'wahl'; }
+  function persUi() { var adm = $('#sheet [data-f="admin"]').checked; $('#persRechte').hidden = adm; $('#persFrei').hidden = adm; $('#einWahl').hidden = S.ed.ein !== 'wahl'; }
 
   /* ---------- Konto und Verbindung ---------- */
   function sheetKonto() {
@@ -2929,6 +3020,37 @@ var Core = (function () {
       geh(sc);
     },
     freiAuf: function () { fr(); geh('frei'); if (!fr().name) setTimeout(function () { var i = $('#frName'); if (i && S.screen === 'frei') i.focus({ preventScroll: true }); }, 480); },
+    frEntwSpeichern: function () {
+      var p = frPruefen(false); if (!p || entwSkriptAlt()) return;
+      var f = fr();
+      tu(api('freiEntwurf', { id: f.id, name: f.name.trim(), z: f.z, rab: f.rab, it: frItems() }))
+        .then(function (r) { frNeu(); geh('start'); feier('Gespeichert', 'Ein Admin wird informiert'); if (r.hinweis) toast(r.hinweis, true); }, function () {});
+    },
+    frEntwOeffne: function (b) {
+      var e = Core.finde(entwuerfe(), b.getAttribute('data-id')); if (!e) return;
+      S.fr = frAusEntwurf(e); frSichern(); geh('frei');
+    },
+    frEntwWeg: function (b) {
+      if (!b.classList.contains('scharf')) { b.classList.add('scharf'); b.textContent = '?'; setTimeout(function () { if (b.isConnected) { b.classList.remove('scharf'); b.innerHTML = I.weg; } }, 3000); return; }
+      var id = b.getAttribute('data-id'); if (entwSkriptAlt()) return;
+      tu(api('freiEntwurfWeg', { id: id }), 'Gelöscht').then(function () { if (S.fr && S.fr.id === id) { S.fr = null; LS.del('frei'); } render(); }, function () {});
+    },
+    frPruef: function (b) {
+      var e = Core.finde(entwuerfe(), b.getAttribute('data-id')); if (!e) return;
+      var items = (e.it || []).map(function (i) { var a = Core.finde(S.cfg.arts, i.a); return '<div class="row"><div class="mid"><b>' + esc(a ? a.name : i.a) + '</b></div><span class="amt num">' + ((i.k ? i.k + ' Kiste' + (i.k === 1 ? '' : 'n') : '') + (i.k && i.f ? ' + ' : '') + (i.f ? i.f + (a && a.typ === 'stueck' ? ' ' + (a.einheit || 'Stück') : ' Fl.') : '')) + '</span></div>'; }).join('');
+      S.pruefId = e.id;
+      sheet('Freie Abrechnung prüfen', '<p class="hint"><b>' + esc(e.name) + '</b> · von ' + esc(e.by) + ' · ' + esc(tagText(e.z)) + (e.rab === false ? ' · ohne Kistenrabatt' : '') + ' · <b>' + eur(e.summe || 0) + '</b>' + (e.status === 'zurueck' ? '<br>Schon zurückgegeben' + (e.grund ? ': ' + esc(e.grund) : '') : '') + '</p><div class="list">' + items + '</div>' +
+        '<label class="feld"><span>Nur bei „Zurückgeben“: Grund (die Person sieht ihn)</span><input data-f="grund" maxlength="200" autocomplete="off" placeholder="z. B. Bitte Datum prüfen"></label>' +
+        '<div class="reihe"><button class="btn rot klein" type="button" data-act="frZurueck" data-busy>Zurückgeben</button><button class="btn" type="button" data-act="frPruefWeiter">Prüfen und senden</button></div>');
+    },
+    frPruefWeiter: function () {
+      var e = Core.finde(entwuerfe(), S.pruefId); if (!e) { schliesse(); return; }
+      S.fr = frAusEntwurf(e); frSichern(); schliesse(); geh('frei');
+    },
+    frZurueck: function () {
+      var id = S.pruefId, g = feld('grund') || ''; if (!id || entwSkriptAlt()) return;
+      tu(api('freiZurueck', { id: id, grund: g }), 'Zurückgegeben').then(function () { schliesse(); render(); }, function () {});
+    },
     frWeiter: function () { var e = $('#frEnde'); if (e) e.scrollIntoView({ behavior: ruhig ? 'auto' : 'smooth', block: 'start' }); },
     frAnsehen: function () {
       var p = frPruefen(false); if (!p) return;
@@ -3149,7 +3271,7 @@ var Core = (function () {
       var name = feld('name'); if (!name) { toast('Name fehlt', true); return; }
       var ein = S.ed.ein === 'alle' ? true : S.ed.ein === 'wahl' ? $$('#einWahl input:checked').map(function (c) { return c.getAttribute('data-dept'); }) : [];
       var neuP = !S.ed.id;
-      tu(api('person', { p: { id: S.ed.id || undefined, name: name, hallo: feld('hallo'), gesperrt: !!feld('gesperrt'), r: { admin: feld('admin'), ein: ein, abr: false, verw: false } } }))
+      tu(api('person', { p: { id: S.ed.id || undefined, name: name, hallo: feld('hallo'), gesperrt: !!feld('gesperrt'), r: { admin: feld('admin'), ein: ein, abr: false, verw: false, frei: !!feld('frei') } } }))
         .then(function (r) { render(); if (neuP) sheetPers(r.person, true); else { schliesse(); feier('Gespeichert', name); } }, function () {});
     },
     persWeg: function (b) {
@@ -3166,7 +3288,7 @@ var Core = (function () {
     },
     setSpeichern: function () {
       var f2 = function (n) { var el = $('#setForm [data-f="' + n + '"]'); return el.type === 'checkbox' ? el.checked : el.value.trim(); };
-      tu(api('set', { data: { admin: f2('admin'), hinweis: f2('hinweis'), kopie: f2('kopie'), tage: f2('tage') } })).then(function () { render(); feier('Gespeichert'); }, function () {});
+      tu(api('set', { data: { admin: f2('admin'), hinweis: f2('hinweis'), kopie: f2('kopie'), freiMail: f2('freiMail'), tage: f2('tage') } })).then(function () { render(); feier('Gespeichert'); }, function () {});
     },
 
     ich: function () { sheetKonto(); },
