@@ -1,0 +1,37 @@
+name: Google-Skript aktualisieren
+
+# Läuft, sobald Code.gs geändert wird (oder von Hand unter "Actions").
+on:
+  push:
+    branches: [main]
+    paths: ['Code.gs']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: clasp installieren
+        run: npm install -g @google/clasp@2
+      - name: Anmeldung und Projekt
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+        run: |
+          printf '%s' "$CLASPRC_JSON" > ~/.clasprc.json
+          mkdir -p /tmp/skript && cd /tmp/skript
+          printf '{"scriptId":"%s","rootDir":"","fileExtension":"gs"}' "$SCRIPT_ID" > .clasp.json
+          clasp pull
+      - name: Code.gs einspielen und neue Version bereitstellen
+        env:
+          DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+        run: |
+          cd /tmp/skript
+          cp "$GITHUB_WORKSPACE/Code.gs" ./Code.gs
+          ls
+          clasp push -f
+          clasp deploy -i "$DEPLOYMENT_ID" -d "Automatisch aus GitHub ($GITHUB_SHA)"
